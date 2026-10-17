@@ -2,7 +2,7 @@ defmodule AshAuthzed do
   @moduledoc """
   Standalone Ash Framework extension for Zanzibar / ReBAC authorization
   backed by `Licet` (embedded Postgres/Ecto), `SpiceDB` / `Authzed` (HTTP via `Req`),
-  or `AshAuthzed.Adapters.Memory` (in-memory `Licet.Engine`).
+  or `AshAuthzed.Adapters.Memory` (in-memory `Licet` engine).
 
   ## Usage
 

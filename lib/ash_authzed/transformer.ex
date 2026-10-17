@@ -1,5 +1,9 @@
 defmodule AshAuthzed.Transformer do
-  @moduledoc false
+  @moduledoc """
+  Compile-time Spark DSL transformer that attaches `AshAuthzed.SyncChange` to resource
+  actions (`:create`, `:update`, `:destroy`) and registers `@external_resource` for
+  the configured `.zed` / YAML schema file.
+  """
   use Spark.Dsl.Transformer
 
   alias AshAuthzed.Verifiers.VerifyZedSchema
