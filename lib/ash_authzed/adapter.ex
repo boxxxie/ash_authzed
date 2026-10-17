@@ -89,7 +89,7 @@ defmodule AshAuthzed.Adapter do
   @doc """
   Applies a list of relationship tuple operations (`{:create | :touch | :delete, tuple_string}`).
   """
-  @spec write_tuples([operation()], keyword()) :: {:ok, term()} | {:error, Exception.t()}
+  @spec write_tuples([operation()], keyword()) :: :ok | {:ok, term()} | {:error, Exception.t()}
   def write_tuples(operations, opts \\ [])
   def write_tuples([], _opts), do: {:ok, :noop}
 

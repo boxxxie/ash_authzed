@@ -1,9 +1,10 @@
 # AshAuthzed
 
+[![CI](https://github.com/boxxxie/ash_authzed/actions/workflows/elixir.yml/badge.svg)](https://github.com/boxxxie/ash_authzed/actions/workflows/elixir.yml)
 [![Hex.pm](https://img.shields.io/hexpm/v/ash_authzed.svg)](https://hex.pm/packages/ash_authzed)
 [![HexDocs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/ash_authzed)
 [![Hex.pm Downloads](https://img.shields.io/hexpm/dt/ash_authzed.svg)](https://hex.pm/packages/ash_authzed)
-[![License](https://img.shields.io/hexpm/l/ash_authzed.svg)](https://github.com/boxxxie/ash_authzed/blob/master/LICENSE)
+[![License](https://img.shields.io/github/license/boxxxie/ash_authzed.svg)](https://github.com/boxxxie/ash_authzed/blob/master/LICENSE)
 
 **Declarative Relationship-Based Access Control (ReBAC) and Zanzibar-style permissions for the [Ash Framework](https://ash-hq.org/).**
 

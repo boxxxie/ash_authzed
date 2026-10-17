@@ -16,6 +16,7 @@ defmodule AshAuthzed.MixProject do
       deps: deps(),
       package: package(),
       docs: docs(),
+      dialyzer: [plt_add_apps: [:mix]],
       description:
         "Zanzibar-style Relationship-Based Access Control (ReBAC) extension for Ash Framework with SpiceDB and Licet adapters."
     ]
@@ -65,6 +66,7 @@ defmodule AshAuthzed.MixProject do
         "compile --warnings-as-errors",
         "deps.unlock --unused",
         "format --check-formatted",
+        "credo --strict",
         "test"
       ]
     ]
