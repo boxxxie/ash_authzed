@@ -411,14 +411,15 @@ defmodule Mix.Tasks.AshAuthzed.Bench do
   end
 
   defp push_spicedb_schema(url, token, schema_text) do
-    case Req.post(
-           url: String.trim_trailing(url, "/") <> "/v1/schema/write",
-           headers: [{"authorization", "Bearer #{token}"}],
-           json: %{schema: schema_text},
-           retry: false
+    case AshAuthzed.apply_schema(schema_text,
+           adapter: :spicedb_http,
+           url: url,
+           token: token,
+           req_options: [retry: false]
          ) do
-      {:ok, %Req.Response{status: status}} when status in 200..299 -> :ok
-      other -> {:error, other}
+      {:ok, _} -> :ok
+      :ok -> :ok
+      {:error, _} = err -> err
     end
   end
 

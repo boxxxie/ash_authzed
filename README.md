@@ -47,11 +47,11 @@ end
 
 ## Key Features
 
-- **Declarative Resource DSL** — Map Zanzibar `object_type`, direct `relation` tuples, `external_role` mappings, and `conditional_wildcard` rules directly inside your `Ash.Resource` definitions (`authzed` / `rebac` DSL sections).
+- **Declarative & Schema-First Resource DSL** — Map Zanzibar `object_type`, direct `relation` tuples, `external_role` mappings, and `conditional_wildcard` rules inside your `Ash.Resource` definitions (`authzed` / `rebac` DSL sections)—or set `from_zed: true` and `derive_policies: true` to automatically derive relations and policies directly from your `.zed` schema.
 - **Compile-Time Schema Verification** — Validates your resource's `object_type`, relations, enum role mappings, and policy check permissions against your `.zed` or `.yaml` schema at compile time—complete with *"Did you mean?"* Jaro-distance suggestions and automatic `@external_resource` recompilation when your schema file changes.
 - **Native Ash Policy Checks** — Use `authzed_can/1,2` and `authzed_can_assign/2` (or their `rebac_*` aliases) inside `policies` blocks to filter collection reads via `lookup_resources` and authorize mutations or role assignments via `check?`.
 - **Automatic & Batched Tuple Synchronization** — Automatically wires lifecycle hooks onto `:create`, `:update`, and `:destroy` actions. Supports single-record mutations, atomic updates, and deduplicated batch writes across `Ash.bulk_create!`, `Ash.bulk_update!`, and `Ash.bulk_destroy!`.
-- **Built-In Mix Tasks** — Includes `mix ash_authzed.install` (Igniter installer), `mix ash_authzed.backfill` (keyset-paginated tuple reconciliation for existing records), and `mix ash_authzed.bench` (cross-adapter throughput benchmarking).
+- **Built-In Mix Tasks** — Includes `mix ash_authzed.install` (Igniter installer), `mix ash_authzed.schema.apply` (runtime `.zed` / `.yaml` schema deployment across adapters), `mix ash_authzed.backfill` (keyset-paginated tuple reconciliation for existing records), and `mix ash_authzed.bench` (cross-adapter throughput benchmarking).
 
 ## Pluggable Adapters
 
@@ -86,7 +86,7 @@ mix igniter.install ash_authzed --adapter spicedb --yes
 ```elixir
 def deps do
   [
-    {:ash_authzed, "~> 0.1.0"},
+    {:ash_authzed, "~> 0.2.0"},
     # Required only if using AshAuthzed.Adapters.SpiceDBHttp:
     {:req, "~> 0.5"}
   ]
@@ -229,6 +229,40 @@ defmodule MyApp.Accounts.User do
       public? true
       constraints one_of: [:user, :admin, :super_admin]
     end
+  end
+end
+```
+
+### Schema-First Resource & Policy Derivation (`from_zed` & `derive_policies`)
+
+When your `.zed` file is the single source of truth, enable `from_zed` and `derive_policies` to automatically derive single-subject relations (matching `:<relation>_id` attributes on the resource) and `Ash.Policy.Authorizer` policies directly from your Zanzibar definition at compile time:
+
+```elixir
+defmodule MyApp.Workspace.Document do
+  use Ash.Resource,
+    domain: MyApp.Workspace,
+    authorizers: [Ash.Policy.Authorizer],
+    extensions: [AshAuthzed]
+
+  attributes do
+    uuid_primary_key :id
+    attribute :owner_id, :uuid, allow_nil?: false, public?: true
+    attribute :organization_id, :uuid, allow_nil?: false, public?: true
+  end
+
+  actions do
+    defaults [:read, :create, :update, :destroy]
+  end
+
+  authzed do
+    object_type "document"
+    from_zed "priv/authzed/schema.zed"
+    # Or `derive_policies [view: :read, edit: :update, delete: :destroy]`
+    derive_policies true
+
+    # Explicit relations take precedence over auto-derived ones
+    # (e.g. for static subjects or union/subject-set relations):
+    relation :platform, static_subject: "platform:main"
   end
 end
 ```
@@ -401,6 +435,18 @@ If any mismatch is detected, compilation fails immediately with a `Spark.Error.D
 
 ## Mix Tasks
 
+### Applying Schemas at Runtime (`mix ash_authzed.schema.apply`)
+
+Push your `.zed` or `.yaml` Zanzibar schema directly to the configured ReBAC backend (`Licet`, `SpiceDBHttp`, or `Memory`) via `AshAuthzed.apply_schema/2` or the Mix task:
+
+```bash
+# Apply the default schema (`config :ash_authzed, :schema_path`) to the configured adapter
+mix ash_authzed.schema.apply
+
+# Apply an explicit .zed or .yaml schema file to SpiceDB
+mix ash_authzed.schema.apply --schema priv/authzed/schema.zed --adapter spicedb_http
+```
+
 ### Backfilling Existing Data (`mix ash_authzed.backfill`)
 
 When adding `AshAuthzed` to an existing application with populated database tables, stream and reconcile relationship tuples in batches:
@@ -473,6 +519,7 @@ While `AshAuthzed.Adapters.Memory` and `Licet.Validate` run purely in Elixir wit
 | `[:ash_authzed, :check, :start \| :stop \| :exception]` | `duration`, `monotonic_time` | `adapter`, `resource`, `permission`, `subject`, `status` |
 | `[:ash_authzed, :lookup_resources, :start \| :stop \| :exception]` | `duration`, `monotonic_time` | `adapter`, `resource_type`, `permission`, `subject`, `status` |
 | `[:ash_authzed, :write_tuples, :start \| :stop \| :exception]` | `duration`, `monotonic_time` | `adapter`, `operation_count`, `operations`, `status` |
+| `[:ash_authzed, :apply_schema, :start \| :stop \| :exception]` | `duration`, `monotonic_time` | `adapter`, `status` |
 | `[:ash_authzed, :adapter, :write_tuples]` | `tuple_count` | `adapter`, `operations` |
 
 Adapter and validation failures return structured `%AshAuthzed.Error{reason: atom(), details: term()}` exceptions.

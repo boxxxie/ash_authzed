@@ -64,6 +64,19 @@ defmodule AshAuthzed.Adapters.Licet do
     end
   end
 
+  @impl true
+  def apply_schema(schema_text, opts) do
+    with {:ok, instance} <- fetch_instance(opts) do
+      licet_opts = Keyword.take(opts, [:metadata])
+
+      case Licet.write_schema(instance, schema_text, licet_opts) do
+        {:ok, token} -> {:ok, token}
+        :ok -> :ok
+        {:error, reason} -> {:error, Error.new(:licet_write_schema_failed, reason)}
+      end
+    end
+  end
+
   defp collect_all_pages(instance, resource_type, permission, subject, opts, cursor, acc) do
     page_opts = if cursor, do: Keyword.put(opts, :cursor, cursor), else: opts
 

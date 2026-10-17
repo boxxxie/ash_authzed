@@ -52,6 +52,11 @@ defmodule MyApp.Accounts.User do
   end
 end
 
+# ✅ DO: Use `from_zed: true` (or `from_zed: "priv/authzed/schema.zed"`) and `derive_policies: true`
+# when you want single-subject relations (`:<relation>_id`) and `Ash.Policy.Authorizer` policies
+# automatically derived from the `.zed` definition (grouped by `action_type` with OR semantics).
+# Override static subjects or union/subject-set relations (`user | group#member`) explicitly in `authzed`.
+
 # ❌ DON'T: Do not invent `resource_type`, `field:`, `condition: expr(...)`, or nested `sync do ... end` blocks
 ```
 
@@ -145,6 +150,7 @@ end
 ## Operational Mix Tasks
 
 - `mix igniter.install ash_authzed --yes` — Installs and configures `AshAuthzed` via Igniter (always pass `--yes` in non-interactive sessions).
+- `mix ash_authzed.schema.apply` — Applies the `.zed` or `.yaml` schema file to the configured adapter (`--schema`, `--adapter`).
 - `mix ash_authzed.backfill` — Streams existing Ash resources and reconciles relationship tuples in batches (`--resource`, `--domain`, `--batch-size`, `--dry-run`, `--no-reconcile`).
 - `mix ash_authzed.bench` — Benchmarks single creates, bulk creates, `Ash.can?`, collection reads, and atomic bulk updates across adapters.
 - `mix spark.cheat_sheets --extensions AshAuthzed` — Regenerates `documentation/dsls/DSL-AshAuthzed.md` after modifying the Spark DSL schema.

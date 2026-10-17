@@ -65,6 +65,10 @@ Configures Zanzibar / Authzed ReBAC tuple synchronization and policy checks.
 | [`adapter`](#authzed-adapter){: #authzed-adapter } | `atom` | `:licet` | The ReBAC adapter to use (`:licet`, `:spicedb_http`, `:memory`, or a custom module). |
 | [`adapter_opts`](#authzed-adapter_opts){: #authzed-adapter_opts } | `keyword` | `[]` | Options forwarded to the configured adapter (e.g. `[instance: MyApp.Licet]`). |
 | [`schema_path`](#authzed-schema_path){: #authzed-schema_path } | `String.t` |  | Path to the `.zed` or `.yaml` validation file used for compile-time schema drift verification. |
+| [`from_zed`](#authzed-from_zed){: #authzed-from_zed } | `String.t \| boolean` | `false` | Path to the `.zed` schema (or `true` to use `schema_path`) to derive relations and policies directly from the Zed definition. Note: `from_zed` auto-derives single-subject relations (`:<relation>_id`); union or subject-set relations (`user \| group#member`) should be explicitly overridden in the `authzed` DSL block. |
+| [`definition`](#authzed-definition){: #authzed-definition } | `String.t` |  | The definition name in the `.zed` schema to derive from (defaults to `object_type`). |
+| [`derive_relations`](#authzed-derive_relations){: #authzed-derive_relations } | `boolean` | `true` | Whether to automatically derive AshAuthzed relations from the Zed definition. |
+| [`derive_policies`](#authzed-derive_policies){: #authzed-derive_policies } | `boolean \| keyword \| map` | `false` | Whether to automatically derive Ash policies from Zed permissions. Can be `true` (standard mappings) or a custom keyword/map mapping (e.g. `[view: :read, edit: :update]`). |
 
 
 
@@ -193,6 +197,10 @@ Alias section for `authzed`.
 | [`adapter`](#rebac-adapter){: #rebac-adapter } | `atom` | `:licet` | The ReBAC adapter to use (`:licet`, `:spicedb_http`, `:memory`, or a custom module). |
 | [`adapter_opts`](#rebac-adapter_opts){: #rebac-adapter_opts } | `keyword` | `[]` | Options forwarded to the configured adapter (e.g. `[instance: MyApp.Licet]`). |
 | [`schema_path`](#rebac-schema_path){: #rebac-schema_path } | `String.t` |  | Path to the `.zed` or `.yaml` validation file used for compile-time schema drift verification. |
+| [`from_zed`](#rebac-from_zed){: #rebac-from_zed } | `String.t \| boolean` | `false` | Path to the `.zed` schema (or `true` to use `schema_path`) to derive relations and policies directly from the Zed definition. Note: `from_zed` auto-derives single-subject relations (`:<relation>_id`); union or subject-set relations (`user \| group#member`) should be explicitly overridden in the `authzed` DSL block. |
+| [`definition`](#rebac-definition){: #rebac-definition } | `String.t` |  | The definition name in the `.zed` schema to derive from (defaults to `object_type`). |
+| [`derive_relations`](#rebac-derive_relations){: #rebac-derive_relations } | `boolean` | `true` | Whether to automatically derive AshAuthzed relations from the Zed definition. |
+| [`derive_policies`](#rebac-derive_policies){: #rebac-derive_policies } | `boolean \| keyword \| map` | `false` | Whether to automatically derive Ash policies from Zed permissions. Can be `true` (standard mappings) or a custom keyword/map mapping (e.g. `[view: :read, edit: :update]`). |
 
 
 

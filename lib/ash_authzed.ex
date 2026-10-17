@@ -40,6 +40,7 @@ defmodule AshAuthzed do
       end
   """
 
+  alias AshAuthzed.Verifiers.VerifyZedSchema
   alias Spark.Dsl.Extension
 
   defmodule Relation do
@@ -202,6 +203,27 @@ defmodule AshAuthzed do
       type: :string,
       doc:
         "Path to the `.zed` or `.yaml` validation file used for compile-time schema drift verification."
+    ],
+    from_zed: [
+      type: {:or, [:string, :boolean]},
+      default: false,
+      doc:
+        "Path to the `.zed` schema (or `true` to use `schema_path`) to derive relations and policies directly from the Zed definition. Note: `from_zed` auto-derives single-subject relations (`:<relation>_id`); union or subject-set relations (`user | group#member`) should be explicitly overridden in the `authzed` DSL block."
+    ],
+    definition: [
+      type: :string,
+      doc: "The definition name in the `.zed` schema to derive from (defaults to `object_type`)."
+    ],
+    derive_relations: [
+      type: :boolean,
+      default: true,
+      doc: "Whether to automatically derive AshAuthzed relations from the Zed definition."
+    ],
+    derive_policies: [
+      type: {:or, [:boolean, :keyword_list, :map]},
+      default: false,
+      doc:
+        "Whether to automatically derive Ash policies from Zed permissions. Can be `true` (standard mappings) or a custom keyword/map mapping (e.g. `[view: :read, edit: :update]`)."
     ]
   ]
 
@@ -389,6 +411,39 @@ defmodule AshAuthzed do
     end
   end
 
+  @doc """
+  Applies the given `.zed` or YAML schema (file path or raw string) to the configured ReBAC adapter.
+  """
+  @spec apply_schema(String.t(), keyword()) :: :ok | {:ok, term()} | {:error, term()}
+  def apply_schema(path_or_text, opts \\ []) when is_binary(path_or_text) do
+    with {:ok, schema_text} <- resolve_schema_input(path_or_text) do
+      AshAuthzed.Adapter.apply_schema(schema_text, opts)
+    end
+  end
+
+  defp resolve_schema_input(path_or_text) do
+    cond do
+      File.exists?(path_or_text) ->
+        VerifyZedSchema.load_schema_text(path_or_text)
+
+      looks_like_file_path?(path_or_text) ->
+        {:error,
+         AshAuthzed.Error.new(
+           :schema_file_not_found,
+           "Authzed schema file not found at #{inspect(path_or_text)}."
+         )}
+
+      true ->
+        {:ok, path_or_text}
+    end
+  end
+
+  defp looks_like_file_path?(str) do
+    not String.contains?(str, "\n") and
+      not String.contains?(str, "{") and
+      String.ends_with?(str, [".zed", ".yaml", ".yml"])
+  end
+
   defp persist_batch_ops(_ops, true, _adapter_opts), do: :ok
 
   defp persist_batch_ops(ops, false, adapter_opts) do
@@ -416,4 +471,5 @@ defmodule AshRebac do
   defdelegate registered_resources(otp_app_or_domains), to: AshAuthzed
   defdelegate backfill(resource_or_query, opts \\ []), to: AshAuthzed
   defdelegate backfill_all(otp_app_or_domains, opts \\ []), to: AshAuthzed
+  defdelegate apply_schema(path_or_text, opts \\ []), to: AshAuthzed
 end

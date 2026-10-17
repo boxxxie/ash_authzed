@@ -203,6 +203,11 @@ defmodule AshAuthzed.BatchTelemetryTest do
       def write_tuples(_operations, _opts) do
         {:error, AshAuthzed.Error.new(:simulated_write_error, "write failed")}
       end
+
+      @impl true
+      def apply_schema(_schema_text, _opts) do
+        {:error, AshAuthzed.Error.new(:simulated_apply_error, "apply failed")}
+      end
     end
 
     test "emits :start and :stop with status: :error when adapter returns {:error, _}, and :exception when adapter raises" do
@@ -214,6 +219,8 @@ defmodule AshAuthzed.BatchTelemetryTest do
         [
           [:ash_authzed, :lookup_resources, :start],
           [:ash_authzed, :lookup_resources, :stop],
+          [:ash_authzed, :apply_schema, :start],
+          [:ash_authzed, :apply_schema, :stop],
           [:ash_authzed, :check, :start],
           [:ash_authzed, :check, :exception]
         ],
@@ -237,7 +244,17 @@ defmodule AshAuthzed.BatchTelemetryTest do
       assert_receive {:span_event, [:ash_authzed, :lookup_resources, :stop], %{duration: _},
                       %{adapter: RaisingAdapter, status: :error}}
 
-      # 2. Raising inside adapter emits `[:ash_authzed, :check, :exception]`
+      # 2. apply_schema emits :start and :stop span events
+      assert {:error, %AshAuthzed.Error{reason: :simulated_apply_error}} =
+               AshAuthzed.Adapter.apply_schema("definition user {}", adapter: RaisingAdapter)
+
+      assert_receive {:span_event, [:ash_authzed, :apply_schema, :start], _,
+                      %{adapter: RaisingAdapter}}
+
+      assert_receive {:span_event, [:ash_authzed, :apply_schema, :stop], %{duration: _},
+                      %{adapter: RaisingAdapter, status: :error}}
+
+      # 3. Raising inside adapter emits `[:ash_authzed, :check, :exception]`
       assert_raise RuntimeError, "simulated adapter crash", fn ->
         AshAuthzed.Adapter.check("user_profile:alice", :view, "user:alice",
           adapter: RaisingAdapter

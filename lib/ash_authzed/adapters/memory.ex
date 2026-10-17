@@ -134,6 +134,20 @@ defmodule AshAuthzed.Adapters.Memory do
   defp apply_operation({:touch, rel}, acc), do: MapSet.put(acc, rel)
   defp apply_operation({:delete, rel}, acc), do: MapSet.delete(acc, rel)
 
+  @impl true
+  def apply_schema(schema_text, opts) do
+    server = Keyword.get(opts, :store) || Keyword.get(opts, :name) || __MODULE__
+
+    with :ok <- ensure_started(server),
+         {:ok, compiled} <- resolve_schema(schema_text) do
+      Agent.update(server, fn state ->
+        Map.put(state, :schema, compiled)
+      end)
+
+      :ok
+    end
+  end
+
   @doc """
   Returns all currently stored `%Licet.Relationship{}` tuples as strings.
   """

@@ -29,7 +29,7 @@ Add `:ash_authzed` to `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ash_authzed, "~> 0.1.0"},
+    {:ash_authzed, "~> 0.2.0"},
     # Required only if using AshAuthzed.Adapters.SpiceDBHttp:
     {:req, "~> 0.5"}
   ]
@@ -199,14 +199,14 @@ end
 ```
 
 During compilation:
-1. `AshAuthzed.Transformer` attaches `AshAuthzed.SyncChange` to `:create`, `:update`, and `:destroy` actions and registers `@external_resource` for `schema_path`.
+1. `AshAuthzed.Transformer` attaches `AshAuthzed.SyncChange` to `:create`, `:update`, and `:destroy` actions and registers `@external_resource` for `schema_path` (and derives relations/policies when `from_zed: true` / `derive_policies: true` are set).
 2. `AshAuthzed.Verifiers.VerifyZedSchema` verifies that `user_profile`, `owner`, `platform`, `is_protected_admin`, and all mapped `external_role` relations exist in your schema.
 
 ---
 
 ## 5. Writing Policies with `authzed_can/1,2` and `authzed_can_assign/2`
 
-Add a `policies` block to your resource using the imported `AshAuthzed.PolicyMacros`:
+Add a `policies` block to your resource using the imported `AshAuthzed.PolicyMacros` (or set `from_zed: true` and `derive_policies: true` to auto-generate standard action policies directly from your `.zed` permissions):
 
 ```elixir
   policies do
@@ -234,7 +234,17 @@ Add a `policies` block to your resource using the imported `AshAuthzed.PolicyMac
 
 ---
 
-## 6. Backfilling Existing Data (`mix ash_authzed.backfill`)
+## 6. Applying Schemas & Backfilling Existing Data
+
+### Applying Your Schema (`mix ash_authzed.schema.apply`)
+
+Push your `.zed` or `.yaml` schema file directly to your configured backend (`Licet`, `SpiceDBHttp`, or `Memory`):
+
+```bash
+mix ash_authzed.schema.apply
+```
+
+### Backfilling Existing Data (`mix ash_authzed.backfill`)
 
 If you are integrating `AshAuthzed` into an application that already has rows in PostgreSQL, run the backfill task to stream and reconcile relationship tuples in batches:
 
@@ -247,7 +257,7 @@ mix ash_authzed.backfill
 ## 7. Benchmarking and Telemetry
 
 ### Telemetry Events
-`AshAuthzed.Adapter` emits `:telemetry.span/3` events (`[:ash_authzed, :check, ...]`, `[:ash_authzed, :lookup_resources, ...]`, and `[:ash_authzed, :write_tuples, ...]`) so you can monitor latency and batch sizes in production.
+`AshAuthzed.Adapter` emits `:telemetry.span/3` events (`[:ash_authzed, :check, ...]`, `[:ash_authzed, :lookup_resources, ...]`, `[:ash_authzed, :write_tuples, ...]`, and `[:ash_authzed, :apply_schema, ...]`) so you can monitor latency and batch sizes in production.
 
 ### Benchmarking Adapters
 To compare throughput and latency across `Memory`, `Licet`, and `SpiceDBHttp`, run:

@@ -82,6 +82,20 @@ if Code.ensure_loaded?(Req) do
       end
     end
 
+    @impl true
+    def apply_schema(schema_text, opts) do
+      case post("/v1/schema/write", %{schema: schema_text}, opts) do
+        {:ok, %{"writtenAt" => %{"token" => token}}} ->
+          {:ok, token}
+
+        {:ok, body} ->
+          {:ok, body}
+
+        {:error, _} = err ->
+          err
+      end
+    end
+
     @doc """
     Converts a Zanzibar relationship tuple string into a SpiceDB JSON relationship map.
     """

@@ -30,14 +30,23 @@ defmodule AshAuthzed.Verifiers.VerifyZedSchema do
 
   @doc false
   def schema_path(dsl_state) do
-    Extension.get_opt(dsl_state, [:authzed], :schema_path, nil) ||
-      Extension.get_opt(dsl_state, [:rebac], :schema_path, nil) ||
-      Application.get_env(:ash_authzed, :schema_path, "priv/licet/user_permissions.yaml")
+    from_zed =
+      Extension.get_opt(dsl_state, [:authzed], :from_zed, nil) ||
+        Extension.get_opt(dsl_state, [:rebac], :from_zed, nil)
+
+    if is_binary(from_zed) do
+      from_zed
+    else
+      Extension.get_opt(dsl_state, [:authzed], :schema_path, nil) ||
+        Extension.get_opt(dsl_state, [:rebac], :schema_path, nil) ||
+        Application.get_env(:ash_authzed, :schema_path, "priv/licet/user_permissions.yaml")
+    end
   end
 
   # --- 1. Load & Parse `.zed` or `.yaml` Schema ---
 
-  defp load_schema_text(path, module) do
+  @doc false
+  def load_schema_text(path, module \\ nil) do
     cond do
       not File.exists?(path) ->
         {:error,
@@ -70,7 +79,8 @@ defmodule AshAuthzed.Verifiers.VerifyZedSchema do
     end
   end
 
-  defp parse_zed_definitions(schema_text) do
+  @doc false
+  def parse_zed_definitions(schema_text) do
     case Schema.parse(schema_text) do
       {:ok, %{definitions: def_map}} when is_map(def_map) ->
         Map.new(def_map, &extract_schema_definition/1)
@@ -87,13 +97,20 @@ defmodule AshAuthzed.Verifiers.VerifyZedSchema do
       |> Enum.map(&to_string/1)
       |> MapSet.new()
 
+    subjects =
+      Map.new(def_struct.relations, fn {rel_name, rel_def} ->
+        first_subject = List.first(rel_def.subjects || [])
+        type = if first_subject, do: first_subject.type, else: "user"
+        {to_string(rel_name), type}
+      end)
+
     permissions =
       def_struct.permissions
       |> Map.keys()
       |> Enum.map(&to_string/1)
       |> MapSet.new()
 
-    {to_string(def_name), %{relations: relations, permissions: permissions}}
+    {to_string(def_name), %{relations: relations, permissions: permissions, subjects: subjects}}
   end
 
   defp parse_zed_definitions_regex(schema_text) do
@@ -101,25 +118,33 @@ defmodule AshAuthzed.Verifiers.VerifyZedSchema do
 
     Regex.scan(~r/definition\s+([\w\/]+)\s*\{([^}]*)\}/s, stripped)
     |> Map.new(fn [_, def_name, body] ->
+      rel_matches = Regex.scan(~r/relation\s+(\w+)\s*:\s*([\w\/]+)/, body)
+
       relations =
-        Regex.scan(~r/relation\s+(\w+)\s*:/, body)
-        |> Enum.map(fn [_, rel] -> rel end)
+        rel_matches
+        |> Enum.map(fn [_, rel, _] -> rel end)
         |> MapSet.new()
+
+      subjects =
+        rel_matches
+        |> Map.new(fn [_, rel, sub] -> {rel, sub} end)
 
       permissions =
         Regex.scan(~r/permission\s+(\w+)\s*=/, body)
         |> Enum.map(fn [_, perm] -> perm end)
         |> MapSet.new()
 
-      {def_name, %{relations: relations, permissions: permissions}}
+      {def_name, %{relations: relations, permissions: permissions, subjects: subjects}}
     end)
   end
 
-  # --- 2. Verify `object_type` ---
+  # --- 2. Verify `object_type` / `definition` ---
 
   defp verify_object_type(dsl_state, defs, module) do
     obj_type =
-      Extension.get_opt(dsl_state, [:authzed], :object_type, nil) ||
+      Extension.get_opt(dsl_state, [:authzed], :definition, nil) ||
+        Extension.get_opt(dsl_state, [:rebac], :definition, nil) ||
+        Extension.get_opt(dsl_state, [:authzed], :object_type, nil) ||
         Extension.get_opt(dsl_state, [:rebac], :object_type, nil)
 
     case Map.fetch(defs, obj_type) do

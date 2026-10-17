@@ -25,6 +25,9 @@ defmodule AshAuthzed.Adapter do
   @callback write_tuples(operations :: [operation()], opts :: keyword()) ::
               {:ok, term()} | {:error, Exception.t()}
 
+  @callback apply_schema(schema_text :: String.t(), opts :: keyword()) ::
+              :ok | {:ok, term()} | {:error, Exception.t()}
+
   @doc """
   Checks whether `subject` has `permission` on `resource`.
   Returns `true` if allowed, `false` otherwise.
@@ -106,6 +109,20 @@ defmodule AshAuthzed.Adapter do
 
     :telemetry.span([:ash_authzed, :write_tuples], meta, fn ->
       result = adapter_mod.write_tuples(operations, adapter_opts)
+      {result, Map.put(meta, :status, status_from_result(result))}
+    end)
+  end
+
+  @doc """
+  Applies a `.zed` schema text to the backing adapter store.
+  """
+  @spec apply_schema(String.t(), keyword()) :: :ok | {:ok, term()} | {:error, Exception.t()}
+  def apply_schema(schema_text, opts \\ []) when is_binary(schema_text) do
+    {adapter_mod, adapter_opts} = resolve_adapter(opts)
+    meta = %{adapter: adapter_mod}
+
+    :telemetry.span([:ash_authzed, :apply_schema], meta, fn ->
+      result = adapter_mod.apply_schema(schema_text, adapter_opts)
       {result, Map.put(meta, :status, status_from_result(result))}
     end)
   end

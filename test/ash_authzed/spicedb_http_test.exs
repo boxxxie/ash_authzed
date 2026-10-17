@@ -234,6 +234,25 @@ defmodule AshAuthzed.Adapters.SpiceDBHttpTest do
     end
   end
 
+  describe "apply_schema/2" do
+    test "POSTs schema text to /v1/schema/write and returns writtenAt token" do
+      schema_text = "definition user {}\ndefinition document { relation reader: user }"
+
+      plug = fn conn ->
+        assert conn.method == "POST"
+        assert conn.request_path == "/v1/schema/write"
+        {:ok, raw_body, conn} = Plug.Conn.read_body(conn)
+        decoded = Jason.decode!(raw_body)
+
+        assert decoded == %{"schema" => schema_text}
+        Req.Test.json(conn, %{"writtenAt" => %{"token" => "schema_tok_777"}})
+      end
+
+      assert {:ok, "schema_tok_777"} =
+               SpiceDBHttp.apply_schema(schema_text, req_options: [plug: plug])
+    end
+  end
+
   describe "HTTP error & network failure mapping" do
     for status <- [401, 403, 422, 500] do
       test "maps HTTP #{status} response to {:error, %AshAuthzed.Error{reason: :spicedb_http_error}}" do
