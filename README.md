@@ -416,14 +416,51 @@ mix ash_authzed.backfill --resource MyApp.Accounts.User --batch-size 250
 mix ash_authzed.backfill --dry-run
 ```
 
-### Benchmarking Adapters (`mix ash_authzed.bench`)
+### Schema Validation (`zed validate` & `Licet.Validate`)
 
-Run the built-in benchmark suite to measure single create, bulk create (`after_batch/3`), `Ash.can?`, collection read (`lookup_resources`), and atomic bulk role updates across adapters:
+`AshAuthzed` ships with validation suites (`priv/licet/user_permissions.yaml` and `priv/licet/admin_capabilities.yaml`) that are compatible with both `Licet.Validate` (pure Elixir) and the official AuthZed CLI (`zed validate`):
 
 ```bash
-mix ash_authzed.bench --count 200
-mix ash_authzed.bench --count 200 --compare-spicedb
+# Validate using the AuthZed CLI (zero warnings)
+zed validate priv/licet/user_permissions.yaml priv/licet/admin_capabilities.yaml
+
+# Or run the ExUnit schema & contract validation suite
+mix test test/ash_authzed/schema_validation_test.exs
 ```
+
+### Benchmarking Adapters (`mix ash_authzed.bench`)
+
+`AshAuthzed` includes a built-in benchmark and parity verification task (`lib/mix/tasks/ash_authzed.bench.ex`) that measures single create, bulk create (`after_batch/3`), `Ash.can?`, collection read (`lookup_resources`), and atomic bulk role updates across all supported backends:
+
+```bash
+# Run across all 4 backends (Memory, Licet on Postgres, SpiceDB on Memory, SpiceDB on Postgres)
+mix ash_authzed.bench --all --count 500 --batch-size 100
+
+# Run a specific adapter or comma-separated list (`memory`, `licet`, `spicedb_http`, `spicedb_postgres`)
+mix ash_authzed.bench --adapter memory,licet --count 200
+
+# Benchmark a custom Ash resource in your own application
+mix ash_authzed.bench --resource MyApp.Accounts.User --count 200
+```
+
+#### External Tools & Dependencies for Live Benchmarks & Schema Testing
+
+While `AshAuthzed.Adapters.Memory` and `Licet.Validate` run purely in Elixir with zero external dependencies, running the full live benchmark (`--all`) and CLI schema validation uses:
+
+| Tool / Service | Used By | Purpose & Default Configuration |
+| :--- | :--- | :--- |
+| **[PostgreSQL](https://www.postgresql.org/)** (`>= 14`) | `AshAuthzed.Adapters.Licet`, `:spicedb_postgres` | Automatically provisions and tears down isolated temporary schemas/databases via `POSTGRES_URL` (defaults to `ecto://postgres:postgres@localhost/postgres`). |
+| **[SpiceDB](https://github.com/authzed/spicedb)** (`spicedb` binary in `PATH`) | `AshAuthzed.Adapters.SpiceDBHttp` | Automatically spawns an ephemeral `spicedb serve` HTTP/gRPC server (and runs `spicedb datastore migrate head` for `:spicedb_postgres`) if `SPICEDB_URL` is not already running. |
+| **[AuthZed CLI](https://github.com/authzed/zed)** (`zed` binary in `PATH`) | `zed validate` / `schema_validation_test.exs` | Validates `.zed` and `.yaml` schema definitions, relationship fixtures, and permission assertions offline and in GitHub Actions CI (`authzed/action-spicedb-validate@v1`). |
+
+#### Reference Benchmark Results (500 records, batch size 100, full consistency)
+
+| Adapter / Backend | 1x Create | Bulk Create (500 rows) | 1x `Ash.can?` | Read List (500 rows) | Atomic Bulk Update (50 rows) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **`AshAuthzed.Adapters.Memory`** | `88.61 ms` | `171.18 ms` (`0.342 ms/row`) | `7.89 ms` | `28.91 ms` | `27.74 ms` |
+| **`AshAuthzed.Adapters.Licet (PG)`** | `6.42 ms` | `819.39 ms` (`1.639 ms/row`) | `2.85 ms` | `34.28 ms` | `122.23 ms` |
+| **`AshAuthzed.Adapters.SpiceDBHttp (Mem)`** | `4.16 ms` | `360.70 ms` (`0.721 ms/row`) | `1.27 ms` | `28.07 ms` | `77.13 ms` |
+| **`AshAuthzed.Adapters.SpiceDBHttp (PG)`** | `7.25 ms` | `598.46 ms` (`1.197 ms/row`) | `7.57 ms` | `31.36 ms` | `110.09 ms` |
 
 ---
 
