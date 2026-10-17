@@ -231,6 +231,53 @@ defmodule AshAuthzed.CapabilityPermissionsTest do
         AdminCapabilities.update_item!(item, %{title: "Nil Actor"}, actor: nil)
       end
     end
+
+    test "clearing capability to nil or reassigning admin_id revokes previous actor's tuple and handles nil subject_id cleanly",
+         %{admin_actor: catalog_admin} do
+      former_admin = %{id: Ash.UUID.generate(), type: "user"}
+      new_admin = %{id: Ash.UUID.generate(), type: "user"}
+
+      scoped_item =
+        Item
+        |> Ash.Changeset.for_create(:create, %{
+          title: "Reassignable Item",
+          admin_id: former_admin.id,
+          capability: :admin
+        })
+        |> Ash.create!(authorize?: false)
+
+      assert Ash.can?({scoped_item, :update}, former_admin)
+
+      # 1. Reassign admin_id from former_admin to new_admin while keeping capability: :admin
+      assert {:ok, reassigned_item} =
+               AdminCapabilities.update_item(
+                 scoped_item,
+                 %{admin_id: new_admin.id, capability: :admin},
+                 actor: catalog_admin
+               )
+
+      refute Ash.can?({reassigned_item, :update}, former_admin)
+      assert Ash.can?({reassigned_item, :update}, new_admin)
+
+      # 2. Clear capability to nil -> revokes new_admin's :admin tuple without error
+      assert {:ok, cleared_item} =
+               AdminCapabilities.update_item(
+                 reassigned_item,
+                 %{capability: nil},
+                 actor: catalog_admin
+               )
+
+      refute Ash.can?({cleared_item, :update}, new_admin)
+
+      # 3. Creating and destroying an item with nil admin_id and nil capability emits no malformed tuples
+      assert {:ok, unassigned_item} =
+               AdminCapabilities.create_item(
+                 %{title: "Unassigned", admin_id: nil, capability: nil},
+                 actor: catalog_admin
+               )
+
+      assert :ok = AdminCapabilities.destroy_item(unassigned_item, actor: catalog_admin)
+    end
   end
 
   describe "compile-time capability schema verification" do

@@ -225,6 +225,9 @@ defmodule AshAuthzed do
     verifiers: [AshAuthzed.Verifiers.VerifyZedSchema],
     imports: [AshAuthzed.PolicyMacros]
 
+  @doc false
+  def __sections__, do: [@authzed_section, @rebac_section]
+
   @doc """
   Fetches a configuration option from the resource's `authzed` or `rebac` DSL section.
   """
@@ -255,10 +258,15 @@ defmodule AshAuthzed do
     adapter = Application.get_env(:ash_authzed, :adapter, default_adapter)
     default_adapter_opts = get_opt(resource, :adapter_opts, [])
     app_adapter_opts = Application.get_env(:ash_authzed, :adapter_opts, [])
-    adapter_opts = Keyword.merge(default_adapter_opts, app_adapter_opts)
+    override_adapter_opts = Keyword.get(overrides, :adapter_opts, [])
+
+    adapter_opts =
+      default_adapter_opts
+      |> Keyword.merge(app_adapter_opts)
+      |> Keyword.merge(override_adapter_opts)
 
     [adapter: adapter, adapter_opts: adapter_opts]
-    |> Keyword.merge(overrides)
+    |> Keyword.merge(Keyword.delete(overrides, :adapter_opts))
   end
 
   @doc """
@@ -274,7 +282,8 @@ defmodule AshAuthzed do
   def registered_resources(domains) when is_list(domains) do
     for domain <- domains,
         resource <- Ash.Domain.Info.resources(domain),
-        __MODULE__ in Spark.extensions(resource),
+        exts = Spark.extensions(resource),
+        __MODULE__ in exts or AshRebac in exts,
         uniq: true do
       resource
     end
@@ -395,6 +404,12 @@ defmodule AshRebac do
   @moduledoc """
   Alias for `AshAuthzed` for compatibility with `extensions: [AshRebac]`.
   """
+  use Spark.Dsl.Extension,
+    sections: AshAuthzed.__sections__(),
+    transformers: [AshAuthzed.Transformer],
+    verifiers: [AshAuthzed.Verifiers.VerifyZedSchema],
+    imports: [AshAuthzed.PolicyMacros]
+
   defdelegate get_opt(resource, key, default \\ nil), to: AshAuthzed
   defdelegate get_entities(resource), to: AshAuthzed
   defdelegate adapter_config(resource, overrides \\ []), to: AshAuthzed

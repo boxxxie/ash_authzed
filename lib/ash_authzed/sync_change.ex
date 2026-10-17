@@ -145,14 +145,21 @@ defmodule AshAuthzed.SyncChange do
     old_val = Map.get(old_record, field)
     new_val = Map.get(new_record, field)
 
-    if not is_nil(old_val) and old_val != new_val do
-      [
-        {:delete, "#{obj_prefix}##{rel}@#{s_type}:#{old_val}"},
-        {:create, "#{obj_prefix}##{rel}@#{s_type}:#{new_val}"}
-      ]
-    else
-      [{:create, "#{obj_prefix}##{rel}@#{s_type}:#{new_val}"}]
-    end
+    delete_ops =
+      if not is_nil(old_val) and old_val != new_val do
+        [{:delete, "#{obj_prefix}##{rel}@#{s_type}:#{old_val}"}]
+      else
+        []
+      end
+
+    create_ops =
+      if is_nil(new_val) do
+        []
+      else
+        [{:create, "#{obj_prefix}##{rel}@#{s_type}:#{new_val}"}]
+      end
+
+    delete_ops ++ create_ops
   end
 
   defp build_entity_ops(
@@ -162,9 +169,14 @@ defmodule AshAuthzed.SyncChange do
          action_type,
          {_old_record, new_record}
        ) do
-    op = if action_type == :destroy, do: :delete, else: :create
-    val = Map.get(new_record, field)
-    [{op, "#{obj_prefix}##{rel}@#{s_type}:#{val}"}]
+    case Map.get(new_record, field) do
+      nil ->
+        []
+
+      val ->
+        op = if action_type == :destroy, do: :delete, else: :create
+        [{op, "#{obj_prefix}##{rel}@#{s_type}:#{val}"}]
+    end
   end
 
   defp build_entity_ops(
@@ -220,7 +232,7 @@ defmodule AshAuthzed.SyncChange do
         target
       end
 
-    subj = "#{s_type}:#{Map.get(new_record, field)}"
+    new_subj = format_subject(s_type, Map.get(new_record, field))
     new_val = Map.get(new_record, attr)
     new_rel = map_role(new_val, mapping)
 
@@ -228,9 +240,9 @@ defmodule AshAuthzed.SyncChange do
       resource,
       action_type,
       old_record,
-      attr,
+      {attr, s_type, field},
       resolved_target,
-      subj,
+      new_subj,
       {new_val, new_rel, mapping}
     )
   end
@@ -239,25 +251,25 @@ defmodule AshAuthzed.SyncChange do
          _resource,
          :destroy,
          _old_record,
-         _attr,
+         _fields,
          target,
-         subj,
+         new_subj,
          {_new_val, new_rel, _mapping}
        )
-       when not is_nil(new_rel) do
-    [{:delete, "#{target}##{new_rel}@#{subj}"}]
+       when not is_nil(new_subj) and not is_nil(new_rel) do
+    [{:delete, "#{target}##{new_rel}@#{new_subj}"}]
   end
 
   defp external_role_transition_ops(
          resource,
          _action_type,
          %OriginalDataNotAvailable{},
-         attr,
+         {attr, _s_type, _field},
          target,
-         subj,
+         new_subj,
          {new_val, new_rel, mapping}
        )
-       when not is_nil(new_rel) do
+       when not is_nil(new_subj) do
     other_vals = possible_attribute_values(resource, attr) -- [new_val]
 
     delete_ops =
@@ -265,57 +277,76 @@ defmodule AshAuthzed.SyncChange do
       |> Enum.map(&map_role(&1, mapping))
       |> Enum.reject(&(&1 == nil or &1 == new_rel))
       |> Enum.uniq()
-      |> Enum.map(&{:delete, "#{target}##{&1}@#{subj}"})
+      |> Enum.map(&{:delete, "#{target}##{&1}@#{new_subj}"})
 
-    delete_ops ++ [{:create, "#{target}##{new_rel}@#{subj}"}]
+    create_ops =
+      if is_nil(new_rel) do
+        []
+      else
+        [{:create, "#{target}##{new_rel}@#{new_subj}"}]
+      end
+
+    delete_ops ++ create_ops
   end
 
   defp external_role_transition_ops(
          _resource,
          :update,
          old_record,
-         attr,
+         {attr, s_type, field},
          target,
-         subj,
+         new_subj,
          {_new_val, new_rel, mapping}
        )
-       when is_map(old_record) and not is_nil(new_rel) do
+       when is_map(old_record) do
+    old_subj = format_subject(s_type, Map.get(old_record, field))
     old_val = Map.get(old_record, attr)
     old_rel = map_role(old_val, mapping)
 
-    if not is_nil(old_rel) and old_rel != new_rel do
-      [
-        {:delete, "#{target}##{old_rel}@#{subj}"},
-        {:create, "#{target}##{new_rel}@#{subj}"}
-      ]
-    else
-      [{:create, "#{target}##{new_rel}@#{subj}"}]
-    end
+    delete_ops =
+      if not is_nil(old_subj) and not is_nil(old_rel) and
+           {old_subj, old_rel} != {new_subj, new_rel} do
+        [{:delete, "#{target}##{old_rel}@#{old_subj}"}]
+      else
+        []
+      end
+
+    create_ops =
+      if not is_nil(new_subj) and not is_nil(new_rel) do
+        [{:create, "#{target}##{new_rel}@#{new_subj}"}]
+      else
+        []
+      end
+
+    delete_ops ++ create_ops
   end
 
   defp external_role_transition_ops(
          _resource,
          _action_type,
          _old_record,
-         _attr,
+         _fields,
          target,
-         subj,
+         new_subj,
          {_new_val, new_rel, _mapping}
        )
-       when not is_nil(new_rel) do
-    [{:create, "#{target}##{new_rel}@#{subj}"}]
+       when not is_nil(new_subj) and not is_nil(new_rel) do
+    [{:create, "#{target}##{new_rel}@#{new_subj}"}]
   end
 
   defp external_role_transition_ops(
          _resource,
          _action_type,
          _old_record,
-         _attr,
+         _fields,
          _target,
-         _subj,
+         _new_subj,
          _role_info
        ),
        do: []
+
+  defp format_subject(_s_type, nil), do: nil
+  defp format_subject(s_type, id), do: "#{s_type}:#{id}"
 
   @doc false
   @spec possible_attribute_values(Ash.Resource.t(), atom()) :: [term()]
@@ -346,10 +377,9 @@ defmodule AshAuthzed.SyncChange do
   @spec deduplicate_batch_ops([Adapter.operation()]) :: [Adapter.operation()]
   def deduplicate_batch_ops(operations) do
     operations
-    |> Enum.reduce(%{}, fn {op, tuple}, acc ->
-      Map.put(acc, tuple, op)
-    end)
-    |> Enum.map(fn {tuple, op} -> {op, tuple} end)
+    |> Enum.reverse()
+    |> Enum.uniq_by(fn {_op, tuple} -> tuple end)
+    |> Enum.reverse()
   end
 
   defp map_role(nil, _mapping), do: nil

@@ -167,6 +167,9 @@ if Code.ensure_loaded?(Req) do
       Enum.flat_map(results, &extract_id_from_item/1)
     end
 
+    defp extract_resource_ids(%{"result" => %{"resourceObjectId" => id}}) when is_binary(id),
+      do: [id]
+
     defp extract_resource_ids(%{"resourceObjectId" => id}) when is_binary(id), do: [id]
 
     defp extract_resource_ids(body) when is_binary(body) do
@@ -221,20 +224,30 @@ if Code.ensure_loaded?(Req) do
         [
           url: String.trim_trailing(url, "/") <> path,
           headers: [{"authorization", "Bearer #{token}"}],
-          json: payload
+          json: payload,
+          decode_body: false
         ]
         |> Keyword.merge(req_opts)
 
       case Req.post(request_opts) do
         {:ok, %Req.Response{status: status, body: body}} when status in 200..299 ->
-          {:ok, body}
+          {:ok, normalize_body(body)}
 
         {:ok, %Req.Response{status: status, body: body}} ->
-          {:error, Error.new(:spicedb_http_error, %{status: status, body: body})}
+          {:error, Error.new(:spicedb_http_error, %{status: status, body: normalize_body(body)})}
 
         {:error, exception} ->
           {:error, Error.new(:spicedb_request_failed, exception)}
       end
     end
+
+    defp normalize_body(body) when is_binary(body) do
+      case Jason.decode(body) do
+        {:ok, decoded} -> decoded
+        {:error, _} -> body
+      end
+    end
+
+    defp normalize_body(body), do: body
   end
 end

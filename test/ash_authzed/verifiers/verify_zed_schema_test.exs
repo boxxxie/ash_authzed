@@ -136,4 +136,87 @@ defmodule AshAuthzed.Verifiers.VerifyZedSchemaTest do
     assert error.message =~ "unknown permission `:admin_creat` on `definition catalog`"
     assert error.message =~ "Did you mean `admin_create`?"
   end
+
+  test "raises DslError when target is missing `:id` or relation subject_id attribute does not exist" do
+    target_error =
+      assert_dsl_error do
+        defmodule MalformedTargetResource do
+          use Ash.Resource,
+            domain: nil,
+            validate_domain_inclusion?: false,
+            extensions: [AshAuthzed]
+
+          authzed do
+            object_type "user_profile"
+            relation :platform, static_subject: "platform_without_colon"
+          end
+
+          attributes do
+            uuid_primary_key :id
+          end
+
+          actions do
+            defaults [:read]
+          end
+        end
+      end
+
+    assert target_error.message =~ "Invalid target format \"platform_without_colon\""
+
+    attr_error =
+      assert_dsl_error do
+        defmodule MissingSubjectIdAttrResource do
+          use Ash.Resource,
+            domain: nil,
+            validate_domain_inclusion?: false,
+            extensions: [AshAuthzed]
+
+          authzed do
+            object_type "user_profile"
+            relation :owner, subject_type: "user", subject_id: :non_existent_owner_id
+          end
+
+          attributes do
+            uuid_primary_key :id
+          end
+
+          actions do
+            defaults [:read]
+          end
+        end
+      end
+
+    assert attr_error.message =~ "Referenced attribute `:non_existent_owner_id` does not exist"
+  end
+
+  test "AshRebac works as a full Spark DSL extension alias" do
+    defmodule RebacAliasResource do
+      use Ash.Resource,
+        domain: nil,
+        validate_domain_inclusion?: false,
+        authorizers: [Ash.Policy.Authorizer],
+        extensions: [AshRebac]
+
+      rebac do
+        object_type "user_profile"
+        relation :owner, subject_type: "user", subject_id: :id
+      end
+
+      attributes do
+        uuid_primary_key :id
+      end
+
+      actions do
+        defaults [:read]
+      end
+
+      policies do
+        policy action(:read) do
+          authorize_if rebac_can(:view)
+        end
+      end
+    end
+
+    assert AshRebac.get_opt(RebacAliasResource, :object_type) == "user_profile"
+  end
 end

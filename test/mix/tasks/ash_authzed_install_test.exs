@@ -1,8 +1,18 @@
 defmodule Mix.Tasks.AshAuthzed.InstallTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
   import Igniter.Test
 
   alias Mix.Tasks.AshAuthzed.Install
+
+  setup do
+    on_exit(fn ->
+      for {key, _val} <- Application.get_all_env(:ash_authzed) do
+        Application.delete_env(:ash_authzed, key)
+      end
+    end)
+
+    :ok
+  end
 
   @default_files %{
     "config/config.exs" => """
@@ -31,12 +41,11 @@ defmodule Mix.Tasks.AshAuthzed.InstallTest do
     |> assert_has_patch("config/config.exs", """
     + |config :ash_authzed,
     + |  adapter: AshAuthzed.Adapters.Licet,
-    + |  licet_instance: Test.Licet,
-    + |  schema_path: "priv/licet/user_permissions.yaml",
-    + |  consistency: :minimize_latency
+    + |  adapter_opts: [instance: Test.Licet, consistency: :minimize_latency],
+    + |  schema_path: "priv/licet/user_permissions.yaml"
     """)
     |> assert_has_patch("config/test.exs", """
-    + |config :ash_authzed, consistency: :full
+    + |config :ash_authzed, adapter_opts: [consistency: :full]
     """)
   end
 
@@ -48,11 +57,11 @@ defmodule Mix.Tasks.AshAuthzed.InstallTest do
     |> assert_has_patch("config/config.exs", """
     + |config :ash_authzed,
     + |  adapter: AshAuthzed.Adapters.SpiceDBHttp,
-    + |  schema_path: "priv/licet/user_permissions.yaml",
-    + |  spicedb_url: "http://localhost:8443"
+    + |  adapter_opts: [url: "http://localhost:8443"],
+    + |  schema_path: "priv/licet/user_permissions.yaml"
     """)
     |> assert_has_patch("config/test.exs", """
-    + |config :ash_authzed, consistency: :full
+    + |config :ash_authzed, adapter_opts: [consistency: :full]
     """)
   end
 
@@ -100,8 +109,8 @@ defmodule Mix.Tasks.AshAuthzed.InstallTest do
     |> assert_has_patch("config/config.exs", """
     + |config :ash_authzed,
     + |  adapter: AshAuthzed.Adapters.SpiceDBHttp,
-    + |  schema_path: "priv/licet/user_permissions.yaml",
-    + |  spicedb_url: "http://localhost:8443"
+    + |  adapter_opts: [url: "http://localhost:8443"],
+    + |  schema_path: "priv/licet/user_permissions.yaml"
     """)
 
     test_project(files: @default_files)

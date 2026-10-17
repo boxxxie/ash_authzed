@@ -49,7 +49,7 @@ defmodule AshAuthzed.Adapter do
 
     :telemetry.span([:ash_authzed, :check], meta, fn ->
       result = adapter_mod.check(resource, perm_str, subject, adapter_opts)
-      {result, Map.put(meta, :status, elem(result, 0))}
+      {result, Map.put(meta, :status, status_from_result(result))}
     end)
   end
 
@@ -71,7 +71,7 @@ defmodule AshAuthzed.Adapter do
 
     :telemetry.span([:ash_authzed, :lookup_resources], meta, fn ->
       result = adapter_mod.lookup_resources(resource_type, perm_str, subject, adapter_opts)
-      {result, Map.put(meta, :status, elem(result, 0))}
+      {result, Map.put(meta, :status, status_from_result(result))}
     end)
   end
 
@@ -106,9 +106,16 @@ defmodule AshAuthzed.Adapter do
 
     :telemetry.span([:ash_authzed, :write_tuples], meta, fn ->
       result = adapter_mod.write_tuples(operations, adapter_opts)
-      {result, Map.put(meta, :status, elem(result, 0))}
+      {result, Map.put(meta, :status, status_from_result(result))}
     end)
   end
+
+  defp status_from_result(:ok), do: :ok
+
+  defp status_from_result(result) when is_tuple(result) and tuple_size(result) > 0,
+    do: elem(result, 0)
+
+  defp status_from_result(_), do: :unknown
 
   @doc false
   @spec resolve_adapter(keyword()) :: {module(), keyword()}

@@ -140,19 +140,31 @@ defmodule AshAuthzed.Adapters.SpiceDBHttpTest do
                  req_options: [plug: plug_list]
                )
 
-      # 2. NDJSON newline-delimited stream format
-      plug_ndjson = fn conn ->
-        ndjson =
-          ~s({"result":{"resourceObjectId":"doc_1"}}\n{"result":{"resourceObjectId":"doc_2"}}\n)
+      # 2. NDJSON newline-delimited stream format (both x-ndjson and application/json from grpc-gateway)
+      for content_type <- ["application/x-ndjson", "application/json"] do
+        plug_ndjson = fn conn ->
+          ndjson =
+            ~s({"result":{"resourceObjectId":"doc_1"}}\n{"result":{"resourceObjectId":"doc_2"}}\n)
 
-        conn
-        |> Plug.Conn.put_resp_content_type("application/x-ndjson")
-        |> Plug.Conn.send_resp(200, ndjson)
+          conn
+          |> Plug.Conn.put_resp_content_type(content_type)
+          |> Plug.Conn.send_resp(200, ndjson)
+        end
+
+        assert {:ok, ["doc_1", "doc_2"]} =
+                 SpiceDBHttp.lookup_resources("document", "view", "user:alice",
+                   req_options: [plug: plug_ndjson]
+                 )
       end
 
-      assert {:ok, ["doc_1", "doc_2"]} =
+      # 3. Single result object `{"result": {"resourceObjectId": "doc_single"}}` with application/json
+      plug_single = fn conn ->
+        Req.Test.json(conn, %{"result" => %{"resourceObjectId" => "doc_single"}})
+      end
+
+      assert {:ok, ["doc_single"]} =
                SpiceDBHttp.lookup_resources("document", "view", "user:alice",
-                 req_options: [plug: plug_ndjson]
+                 req_options: [plug: plug_single]
                )
     end
   end

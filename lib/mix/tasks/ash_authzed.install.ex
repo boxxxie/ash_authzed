@@ -151,19 +151,19 @@ if Code.ensure_loaded?(Igniter.Mix.Task) do
       |> IgniterConfig.configure(
         "config.exs",
         :ash_authzed,
-        [:schema_path],
-        schema_path
+        [:adapter_opts, :url],
+        "http://localhost:8443"
       )
       |> IgniterConfig.configure(
         "config.exs",
         :ash_authzed,
-        [:spicedb_url],
-        "http://localhost:8443"
+        [:schema_path],
+        schema_path
       )
       |> IgniterConfig.configure(
         "test.exs",
         :ash_authzed,
-        [:consistency],
+        [:adapter_opts, :consistency],
         :full
       )
     end
@@ -204,8 +204,14 @@ if Code.ensure_loaded?(Igniter.Mix.Task) do
       |> IgniterConfig.configure(
         "config.exs",
         :ash_authzed,
-        [:licet_instance],
+        [:adapter_opts, :instance],
         licet_module
+      )
+      |> IgniterConfig.configure(
+        "config.exs",
+        :ash_authzed,
+        [:adapter_opts, :consistency],
+        :minimize_latency
       )
       |> IgniterConfig.configure(
         "config.exs",
@@ -214,15 +220,9 @@ if Code.ensure_loaded?(Igniter.Mix.Task) do
         schema_path
       )
       |> IgniterConfig.configure(
-        "config.exs",
-        :ash_authzed,
-        [:consistency],
-        :minimize_latency
-      )
-      |> IgniterConfig.configure(
         "test.exs",
         :ash_authzed,
-        [:consistency],
+        [:adapter_opts, :consistency],
         :full
       )
       |> Igniter.add_notice("""

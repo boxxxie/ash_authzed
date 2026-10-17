@@ -62,7 +62,7 @@ defmodule AshAuthzed.Adapters.Licet do
 
     case Licet.lookup_resources(instance, resource_type, permission, subject, page_opts) do
       {:ok, ids, nil} ->
-        {:ok, acc ++ ids}
+        {:ok, [ids | acc] |> Enum.reverse() |> List.flatten()}
 
       {:ok, ids, next_cursor} ->
         collect_all_pages(
@@ -72,7 +72,7 @@ defmodule AshAuthzed.Adapters.Licet do
           subject,
           opts,
           next_cursor,
-          acc ++ ids
+          [ids | acc]
         )
 
       {:error, reason} ->

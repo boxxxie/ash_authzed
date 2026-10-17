@@ -5,6 +5,12 @@ defmodule AshAuthzed.Verifiers.VerifyZedSchema do
   """
   use Spark.Dsl.Verifier
 
+  alias AshAuthzed.Checks.Can
+  alias AshAuthzed.Checks.CanAssign
+  alias AshAuthzed.ConditionalWildcard
+  alias AshAuthzed.ExternalRole
+  alias AshAuthzed.Relation
+  alias Licet.Schema
   alias Spark.Dsl.Extension
   alias Spark.Dsl.Verifier
   alias Spark.Error.DslError
@@ -65,7 +71,35 @@ defmodule AshAuthzed.Verifiers.VerifyZedSchema do
   end
 
   defp parse_zed_definitions(schema_text) do
-    Regex.scan(~r/definition\s+(\w+)\s*\{([^}]*)\}/s, schema_text)
+    case Schema.parse(schema_text) do
+      {:ok, %{definitions: def_map}} when is_map(def_map) ->
+        Map.new(def_map, &extract_schema_definition/1)
+
+      _ ->
+        parse_zed_definitions_regex(schema_text)
+    end
+  end
+
+  defp extract_schema_definition({def_name, def_struct}) do
+    relations =
+      def_struct.relations
+      |> Map.keys()
+      |> Enum.map(&to_string/1)
+      |> MapSet.new()
+
+    permissions =
+      def_struct.permissions
+      |> Map.keys()
+      |> Enum.map(&to_string/1)
+      |> MapSet.new()
+
+    {to_string(def_name), %{relations: relations, permissions: permissions}}
+  end
+
+  defp parse_zed_definitions_regex(schema_text) do
+    stripped = String.replace(schema_text, ~r{//[^\n]*|/\*.*?\*/}s, "")
+
+    Regex.scan(~r/definition\s+([\w\/]+)\s*\{([^}]*)\}/s, stripped)
     |> Map.new(fn [_, def_name, body] ->
       relations =
         Regex.scan(~r/relation\s+(\w+)\s*:/, body)
@@ -120,27 +154,31 @@ defmodule AshAuthzed.Verifiers.VerifyZedSchema do
     end)
   end
 
-  defp verify_entity(%{name: rel_name}, _dsl_state, obj_type, zed_def, _defs, module)
-       when not is_nil(rel_name) do
-    rel_str = to_string(rel_name)
+  defp verify_entity(%Relation{name: rel_name} = rel, dsl_state, obj_type, zed_def, _defs, module) do
+    path = [:authzed, :relation, rel_name]
 
-    if MapSet.member?(zed_def.relations, rel_str) do
-      :ok
-    else
-      {:error,
-       DslError.exception(
-         module: module,
-         path: [:authzed, :relation, rel_name],
-         message: """
-         Relation `:#{rel_name}` does not exist on `definition #{obj_type}` in your .zed schema.
-         Defined relations on #{obj_type}: #{inspect(MapSet.to_list(zed_def.relations))}#{did_you_mean(rel_str, zed_def.relations)}
-         """
-       )}
+    with :ok <- verify_relation_in_schema(rel_name, obj_type, zed_def, path, module) do
+      verify_relation_subject(rel, dsl_state, path, module)
     end
   end
 
   defp verify_entity(
-         %{attribute: attr, target: target} = ext_role,
+         %ConditionalWildcard{name: rel_name, attribute: attr},
+         dsl_state,
+         obj_type,
+         zed_def,
+         _defs,
+         module
+       ) do
+    path = [:authzed, :conditional_wildcard, rel_name]
+
+    with :ok <- verify_relation_in_schema(rel_name, obj_type, zed_def, path, module) do
+      verify_attribute_exists(dsl_state, attr, path, module)
+    end
+  end
+
+  defp verify_entity(
+         %ExternalRole{attribute: attr, target: target, subject_id: s_id} = ext_role,
          dsl_state,
          obj_type,
          zed_def,
@@ -150,10 +188,59 @@ defmodule AshAuthzed.Verifiers.VerifyZedSchema do
     role_mapping = Map.get(ext_role, :role_mapping) || %{}
     path = [:authzed, :external_role, attr]
 
-    with {:ok, target_type, target_def} <-
+    with :ok <- verify_attribute_exists(dsl_state, s_id, path, module),
+         {:ok, target_type, target_def} <-
            resolve_external_role_target(target, obj_type, zed_def, defs, path, module),
          {:ok, enum_vals} <- fetch_attribute_enum_values(dsl_state, attr, path, module) do
       verify_external_role_values(enum_vals, role_mapping, target_def, target_type, attr, module)
+    end
+  end
+
+  defp verify_relation_subject(
+         %Relation{static_subject: static_subj},
+         _dsl_state,
+         path,
+         module
+       )
+       when is_binary(static_subj) do
+    with {:ok, _type} <- parse_target_type(static_subj, path, module), do: :ok
+  end
+
+  defp verify_relation_subject(
+         %Relation{subject_type: s_type, subject_id: s_id},
+         dsl_state,
+         path,
+         module
+       )
+       when is_binary(s_type) and not is_nil(s_id) do
+    verify_attribute_exists(dsl_state, s_id, path, module)
+  end
+
+  defp verify_relation_subject(%Relation{name: rel_name}, _dsl_state, path, module) do
+    {:error,
+     DslError.exception(
+       module: module,
+       path: path,
+       message:
+         "Relation `:#{rel_name}` must specify either `static_subject: \"type:id\"` or both `subject_type` and `subject_id`."
+     )}
+  end
+
+  defp verify_relation_in_schema(rel_name, obj_type, zed_def, path, module) do
+    rel_str = to_string(rel_name)
+
+    if MapSet.member?(zed_def.relations, rel_str) do
+      :ok
+    else
+      {:error,
+       DslError.exception(
+         module: module,
+         path: path,
+         message: """
+         Relation `:#{rel_name}` does not exist on `definition #{obj_type}` in your .zed schema.
+         Defined relations on #{obj_type}: #{inspect(MapSet.to_list(zed_def.relations))}#{did_you_mean(rel_str, zed_def.relations)}
+         """
+       )}
     end
   end
 
@@ -164,9 +251,8 @@ defmodule AshAuthzed.Verifiers.VerifyZedSchema do
 
   defp resolve_external_role_target(target, _obj_type, _zed_def, defs, path, module)
        when is_binary(target) do
-    [target_type, _target_id] = String.split(target, ":", parts: 2)
-
-    with {:ok, target_def} <- fetch_target_def(defs, target_type, path, module) do
+    with {:ok, target_type} <- parse_target_type(target, path, module),
+         {:ok, target_def} <- fetch_target_def(defs, target_type, path, module) do
       {:ok, target_type, target_def}
     end
   end
@@ -208,8 +294,8 @@ defmodule AshAuthzed.Verifiers.VerifyZedSchema do
       end
 
     Enum.reduce_while(checks, :ok, fn
-      {_check_mod, opts}, :ok when is_list(opts) ->
-        case verify_policy_check(opts, dsl_state, obj_type, zed_def, defs, module) do
+      {check_mod, opts}, :ok when check_mod in [Can, CanAssign] and is_list(opts) ->
+        case verify_policy_check(check_mod, opts, dsl_state, obj_type, zed_def, defs, module) do
           :ok -> {:cont, :ok}
           {:error, _} = err -> {:halt, err}
         end
@@ -219,27 +305,23 @@ defmodule AshAuthzed.Verifiers.VerifyZedSchema do
     end)
   end
 
-  defp verify_policy_check(opts, dsl_state, obj_type, zed_def, defs, module) do
+  defp verify_policy_check(Can, opts, _dsl_state, obj_type, zed_def, defs, module) do
     static_target = opts[:target] || opts[:on]
+    path = [:policies, :policy, :authorize_if]
 
-    cond do
-      Keyword.has_key?(opts, :permission) and is_binary(static_target) ->
-        [target_type, _] = String.split(static_target, ":", parts: 2)
-
-        with {:ok, target_def} <-
-               fetch_target_def(defs, target_type, [:policies, :policy, :authorize_if], module) do
-          verify_permission_check(opts[:permission], target_type, target_def, module)
-        end
-
-      Keyword.has_key?(opts, :permission) ->
-        verify_permission_check(opts[:permission], obj_type, zed_def, module)
-
-      Keyword.has_key?(opts, :attribute) and is_binary(static_target) ->
-        verify_can_assign_check(opts, static_target, dsl_state, defs, module)
-
-      true ->
-        :ok
+    if is_binary(static_target) do
+      with {:ok, target_type} <- parse_target_type(static_target, path, module),
+           {:ok, target_def} <- fetch_target_def(defs, target_type, path, module) do
+        verify_permission_check(opts[:permission], target_type, target_def, module)
+      end
+    else
+      verify_permission_check(opts[:permission], obj_type, zed_def, module)
     end
+  end
+
+  defp verify_policy_check(CanAssign, opts, dsl_state, obj_type, zed_def, defs, module) do
+    static_target = opts[:target] || opts[:on]
+    verify_can_assign_check(opts, static_target, dsl_state, obj_type, zed_def, defs, module)
   end
 
   defp verify_permission_check(permission, obj_type, zed_def, module) do
@@ -261,12 +343,13 @@ defmodule AshAuthzed.Verifiers.VerifyZedSchema do
     end
   end
 
-  defp verify_can_assign_check(opts, static_target, dsl_state, defs, module) do
+  defp verify_can_assign_check(opts, static_target, dsl_state, obj_type, zed_def, defs, module) do
     attr = opts[:attribute]
-    [target_type, _] = String.split(static_target, ":", parts: 2)
     prefix = Keyword.get(opts, :permission_prefix, Keyword.get(opts, :prefix, "assign_"))
+    path = [:policies, :policy, :authorize_if]
 
-    with {:ok, target_def} <- fetch_target_def(defs, target_type, [:policies, :policy], module),
+    with {:ok, target_type, target_def} <-
+           resolve_external_role_target(static_target, obj_type, zed_def, defs, path, module),
          {:ok, enum_vals} <-
            fetch_attribute_enum_values(dsl_state, attr, [:policies, :policy], module) do
       verify_assign_permissions(enum_vals, prefix, target_def, target_type, attr, module)
@@ -297,6 +380,22 @@ defmodule AshAuthzed.Verifiers.VerifyZedSchema do
 
   # --- Helpers & "Did You Mean?" Jaro Distance ---
 
+  defp parse_target_type(target, path, module) when is_binary(target) do
+    case String.split(target, ":", parts: 2) do
+      [target_type, target_id] when target_type != "" and target_id != "" ->
+        {:ok, target_type}
+
+      _ ->
+        {:error,
+         DslError.exception(
+           module: module,
+           path: path,
+           message:
+             "Invalid target format #{inspect(target)}. Expected `\"type:id\"` (e.g. `\"platform:main\"`)."
+         )}
+    end
+  end
+
   defp fetch_target_def(defs, target_type, path, module) do
     case Map.fetch(defs, target_type) do
       {:ok, target_def} ->
@@ -312,6 +411,21 @@ defmodule AshAuthzed.Verifiers.VerifyZedSchema do
            Available definitions: #{inspect(Map.keys(defs))}#{did_you_mean(target_type, Map.keys(defs))}
            """
          )}
+    end
+  end
+
+  defp verify_attribute_exists(dsl_state, attr_name, path, module) do
+    attributes = Extension.get_entities(dsl_state, [:attributes])
+
+    if Enum.any?(attributes, &(&1.name == attr_name)) do
+      :ok
+    else
+      {:error,
+       DslError.exception(
+         module: module,
+         path: path,
+         message: "Referenced attribute `:#{attr_name}` does not exist on #{inspect(module)}."
+       )}
     end
   end
 
