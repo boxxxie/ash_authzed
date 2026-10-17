@@ -1,0 +1,120 @@
+---
+schema: |
+  definition user {}
+
+  definition platform {
+    relation super_admin: user
+    relation admin: user
+    relation member: user
+
+    // Who can create or promote users to specific roles?
+    permission assign_user        = super_admin + admin
+    permission assign_admin       = super_admin
+    permission assign_super_admin = super_admin
+  }
+
+  definition user_profile {
+    relation owner: user
+    relation platform: platform
+
+    // Wildcard tag (`user:*`) present ONLY when this profile belongs to an admin/super_admin
+    relation is_protected_admin: user:*
+
+    // 1. View: Owner, any Admin, or any Super Admin
+    permission view = owner + platform->admin + platform->super_admin
+
+    // 2. Edit:
+    //    - You can always edit your own profile (`owner`)
+    //    - Super Admins can edit anyone (`platform->super_admin`)
+    //    - Admins can edit anyone EXCEPT protected admins (`platform->admin - is_protected_admin`)
+    permission edit = owner + platform->super_admin + (platform->admin - is_protected_admin)
+
+    // 3. Delete:
+    //    - Super Admins can delete anyone EXCEPT themselves (`platform->super_admin - owner`)
+    //    - Admins can delete regular users, never other admins or themselves
+    permission delete = (platform->super_admin - owner) + (platform->admin - is_protected_admin - owner)
+
+    // 4. Change Role (Target check):
+    //    - Never change your own role (`- owner`)
+    //    - Super Admins can change anyone else's role
+    //    - Admins can only change non-admin users' roles
+    permission change_role = (platform->super_admin - owner) + (platform->admin - is_protected_admin - owner)
+  }
+
+relationships: |
+  // --- Platform Roles ---
+  // root = super_admin, alice & bob = admins, charlie & dave = regular users
+  platform:main#super_admin@user:root
+  platform:main#admin@user:alice
+  platform:main#admin@user:bob
+  platform:main#member@user:charlie
+  platform:main#member@user:dave
+
+  // --- Root's Profile (Super Admin -> Protected) ---
+  user_profile:root#owner@user:root
+  user_profile:root#platform@platform:main
+  user_profile:root#is_protected_admin@user:*
+
+  // --- Alice's Profile (Admin -> Protected) ---
+  user_profile:alice#owner@user:alice
+  user_profile:alice#platform@platform:main
+  user_profile:alice#is_protected_admin@user:*
+
+  // --- Bob's Profile (Admin -> Protected) ---
+  user_profile:bob#owner@user:bob
+  user_profile:bob#platform@platform:main
+  user_profile:bob#is_protected_admin@user:*
+
+  // --- Charlie's Profile (Regular User -> Not Protected) ---
+  user_profile:charlie#owner@user:charlie
+  user_profile:charlie#platform@platform:main
+
+  // --- Dave's Profile (Regular User -> Not Protected) ---
+  user_profile:dave#owner@user:dave
+  user_profile:dave#platform@platform:main
+
+assertions:
+  assertTrue:
+    # Self-editing: Everyone can edit their own profile (even admins!)
+    - "user_profile:root#edit@user:root"
+    - "user_profile:alice#edit@user:alice"
+    - "user_profile:charlie#edit@user:charlie"
+
+    # Admin -> Regular User: Alice (admin) CAN edit and delete Charlie (user)
+    - "user_profile:charlie#edit@user:alice"
+    - "user_profile:charlie#delete@user:alice"
+
+    # Super Admin -> Admin: Root (super_admin) CAN edit, delete, and change role of Alice (admin)
+    - "user_profile:alice#edit@user:root"
+    - "user_profile:alice#delete@user:root"
+    - "user_profile:alice#change_role@user:root"
+
+    # Role Creation / Assignment Capabilities on Platform:
+    - "platform:main#assign_user@user:alice"
+    - "platform:main#assign_user@user:root"
+    - "platform:main#assign_admin@user:root"
+    - "platform:main#assign_super_admin@user:root"
+
+  assertFalse:
+    # Admin -> Admin: Alice (admin) CANNOT edit, delete, or change role of Bob (another admin)
+    - "user_profile:bob#edit@user:alice"
+    - "user_profile:bob#delete@user:alice"
+    - "user_profile:bob#change_role@user:alice"
+
+    # Admin -> Super Admin: Alice (admin) CANNOT edit or delete Root (super_admin)
+    - "user_profile:root#edit@user:alice"
+    - "user_profile:root#delete@user:alice"
+
+    # Admin Escalation: Alice (admin) CANNOT assign admin or super_admin roles
+    - "platform:main#assign_admin@user:alice"
+    - "platform:main#assign_super_admin@user:alice"
+
+    # Self-Destruction / Self-Promotion Guardrails:
+    - "user_profile:alice#delete@user:alice"
+    - "user_profile:root#delete@user:root"
+    - "user_profile:alice#change_role@user:alice"
+    - "user_profile:root#change_role@user:root"
+
+    # Regular User -> Other User: Charlie CANNOT edit Dave or assign roles
+    - "user_profile:dave#edit@user:charlie"
+    - "platform:main#assign_user@user:charlie"
