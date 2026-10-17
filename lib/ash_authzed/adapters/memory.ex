@@ -1,6 +1,6 @@
 defmodule AshAuthzed.Adapters.Memory do
   @moduledoc """
-  Caller-supervised in-memory Zanzibar / ReBAC adapter powered by `Licet.Engine`
+  Caller-supervised in-memory Zanzibar / ReBAC adapter powered by `Licet`
   and `Licet.Schema`.
 
   Provides full `.zed` schema evaluation (`check`, `lookup_resources`, `write_tuples`)
@@ -26,23 +26,23 @@ defmodule AshAuthzed.Adapters.Memory do
   alias Licet.Relationship
   alias Licet.Schema
 
-  @schema_opts [
-    name: [
-      type: :atom,
-      default: __MODULE__,
-      doc: "Process registration name for this memory store instance."
-    ],
-    schema: [
-      type: :any,
-      required: true,
-      doc: "A `.zed` schema string, `{:file, path}`, or compiled `%Licet.Schema{}`."
-    ],
-    relationships: [
-      type: {:list, :string},
-      default: [],
-      doc: "Initial relationship tuple strings to seed on startup."
-    ]
-  ]
+  @schema_opts NimbleOptions.new!(
+                 name: [
+                   type: :atom,
+                   default: __MODULE__,
+                   doc: "Process registration name for this memory store instance."
+                 ],
+                 schema: [
+                   type: :any,
+                   required: true,
+                   doc: "A `.zed` schema string, `{:file, path}`, or compiled `%Licet.Schema{}`."
+                 ],
+                 relationships: [
+                   type: {:list, :string},
+                   default: [],
+                   doc: "Initial relationship tuple strings to seed on startup."
+                 ]
+               )
 
   @doc """
   Starts an in-memory ReBAC store linked to the calling process.
