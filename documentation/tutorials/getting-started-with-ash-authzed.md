@@ -257,3 +257,76 @@ To compare throughput and latency across `Memory`, `Licet`, and `SpiceDBHttp`, r
 ```bash
 mix ash_authzed.bench --count 200
 ```
+
+---
+
+## 8. Going Further: Fine-Grained Capabilities (`admin_create`, `admin_edit`, `admin_delete`)
+
+While the `User` profile walkthrough above models classic coarse roles (`super_admin`, `admin`, `member`), Zanzibar schemas also let you decompose roles into **action-level capabilities** without changing your adapter configuration.
+
+For example, in `priv/licet/admin_capabilities.yaml`, a full `admin` automatically inherits `admin_create`, `admin_edit`, and `admin_delete`, while delegated users can be granted individual capabilities (such as `can_edit` -> `admin_edit`) without receiving destructive `admin_delete` access:
+
+```zed
+definition user {}
+
+definition catalog {
+  relation admin: user
+  relation can_create: user
+  relation can_edit: user
+  relation can_delete: user
+
+  permission admin_create = admin + can_create
+  permission admin_edit   = admin + can_edit
+  permission admin_delete = admin + can_delete
+}
+
+definition managed_item {
+  relation catalog: catalog
+  relation admin: user
+  relation can_create: user
+  relation can_edit: user
+  relation can_delete: user
+
+  permission admin_create = admin + can_create + catalog->admin_create
+  permission admin_edit   = admin + can_edit + catalog->admin_edit
+  permission admin_delete = admin + can_delete + catalog->admin_delete
+}
+```
+
+In your `Ash.Resource`, each action checks its corresponding capability via `authzed_can/1`:
+
+```elixir
+defmodule MyApp.Catalog.ManagedItem do
+  use Ash.Resource,
+    domain: MyApp.Catalog,
+    authorizers: [Ash.Policy.Authorizer],
+    extensions: [AshAuthzed]
+
+  authzed do
+    object_type "managed_item"
+    schema_path "priv/licet/admin_capabilities.yaml"
+
+    relation :catalog, static_subject: "catalog:main"
+
+    external_role :capability,
+      target: "catalog:main",
+      subject_type: "user",
+      subject_id: :admin_id
+  end
+
+  policies do
+    policy action(:create) do
+      authorize_if authzed_can(:admin_create)
+    end
+
+    policy action(:update) do
+      authorize_if authzed_can(:admin_edit)
+    end
+
+    policy action(:destroy) do
+      authorize_if authzed_can(:admin_delete)
+    end
+  end
+end
+```
+

@@ -234,6 +234,121 @@ end
 
 ---
 
+## Permission Modeling Patterns
+
+`AshAuthzed` supports both classic role hierarchies and fine-grained capability permissions.
+
+### Pattern 1: Role-Based Permissions (RBAC in ReBAC)
+
+Map an attribute or relationship (such as `:role`) to Zanzibar relations and check coarse permissions (`:view`, `:edit`, `:delete`) in your Ash policies:
+
+```elixir
+defmodule MyApp.Accounts.User do
+  use Ash.Resource,
+    domain: MyApp.Accounts,
+    authorizers: [Ash.Policy.Authorizer],
+    extensions: [AshAuthzed]
+
+  authzed do
+    object_type "user_profile"
+    schema_path "priv/licet/user_permissions.yaml"
+
+    relation :owner, subject_type: "user", subject_id: :id
+    relation :platform, static_subject: "platform:main"
+
+    external_role :role,
+      target: "platform:main",
+      subject_type: "user",
+      subject_id: :id,
+      role_mapping: %{user: "member", admin: "admin", super_admin: "super_admin"}
+  end
+
+  policies do
+    policy action_type(:read) do
+      authorize_if authzed_can(:view)
+    end
+  end
+end
+```
+
+### Pattern 2: Capability-Based Permissions (`admin` with Granular Capabilities)
+
+Model granular action capabilities (`admin_create`, `admin_edit`, `admin_delete`) in your schema. A full `admin` automatically inherits all three capabilities, while delegated actors can be granted individual capabilities (such as `admin_edit` only) without receiving destructive `admin_delete` access.
+
+**1. Define the schema (`.zed` or `.yaml`):**
+
+```zed
+definition user {}
+
+definition catalog {
+  // Full admin role
+  relation admin: user
+
+  // Optional direct capability grants
+  relation can_create: user
+  relation can_edit: user
+  relation can_delete: user
+
+  // Computed capabilities: full admin OR specific capability grant
+  permission admin_create = admin + can_create
+  permission admin_edit   = admin + can_edit
+  permission admin_delete = admin + can_delete
+}
+
+definition managed_item {
+  relation catalog: catalog
+  relation admin: user
+  relation can_create: user
+  relation can_edit: user
+  relation can_delete: user
+
+  permission admin_create = admin + can_create + catalog->admin_create
+  permission admin_edit   = admin + can_edit + catalog->admin_edit
+  permission admin_delete = admin + can_delete + catalog->admin_delete
+}
+```
+
+**2. Guard each Ash action with its specific capability:**
+
+```elixir
+defmodule MyApp.Catalog.ManagedItem do
+  use Ash.Resource,
+    domain: MyApp.Catalog,
+    authorizers: [Ash.Policy.Authorizer],
+    extensions: [AshAuthzed]
+
+  authzed do
+    object_type "managed_item"
+    schema_path "priv/licet/admin_capabilities.yaml"
+
+    # Links item to catalog: `managed_item:<id>#catalog@catalog:main`
+    relation :catalog, static_subject: "catalog:main"
+
+    # Or map a role/capability attribute (`:admin`, `:can_create`, `:can_edit`, `:can_delete`)
+    external_role :capability,
+      target: "catalog:main",
+      subject_type: "user",
+      subject_id: :admin_id
+  end
+
+  policies do
+    policy action(:create) do
+      authorize_if authzed_can(:admin_create)
+    end
+
+    policy action(:update) do
+      authorize_if authzed_can(:admin_edit)
+    end
+
+    policy action(:destroy) do
+      authorize_if authzed_can(:admin_delete)
+    end
+  end
+end
+```
+
+---
+
 ## Testing (`async: true`)
 
 `AshAuthzed` supports fast, isolated `async: true` ExUnit tests out of the box—either via `Licet` with Ecto's SQL Sandbox or via `AshAuthzed.Adapters.Memory`, which runs a caller-supervised in-memory tuple store without requiring Postgres or a SpiceDB container:

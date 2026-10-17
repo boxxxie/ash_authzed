@@ -1,0 +1,71 @@
+---
+schema: |
+  definition user {}
+
+  definition catalog {
+    relation admin: user
+    relation can_create: user
+    relation can_edit: user
+    relation can_delete: user
+
+    permission admin_create = admin + can_create
+    permission admin_edit   = admin + can_edit
+    permission admin_delete = admin + can_delete
+  }
+
+  definition managed_item {
+    relation catalog: catalog
+
+    // Direct per-item role or capability grants
+    relation admin: user
+    relation can_create: user
+    relation can_edit: user
+    relation can_delete: user
+
+    // Computed capabilities: full admin OR specific capability grant (catalog-wide or per-item)
+    permission admin_create = admin + can_create + catalog->admin_create
+    permission admin_edit   = admin + can_edit + catalog->admin_edit
+    permission admin_delete = admin + can_delete + catalog->admin_delete
+  }
+
+relationships: |
+  // --- Catalog-Wide Grants ---
+  // alice = full admin (inherits admin_create, admin_edit, admin_delete)
+  // bob   = delegated editor (only has can_edit -> admin_edit, NOT admin_delete)
+  catalog:main#admin@user:alice
+  catalog:main#can_edit@user:bob
+
+  // --- Managed Items ---
+  managed_item:spec_1#catalog@catalog:main
+  managed_item:spec_2#catalog@catalog:main
+
+  // Per-item direct capability grant: charlie can edit spec_2 only
+  managed_item:spec_2#can_edit@user:charlie
+
+assertions:
+  assertTrue:
+    # Full admin (alice) inherits all three capabilities on catalog and items:
+    - "catalog:main#admin_create@user:alice"
+    - "managed_item:spec_1#admin_create@user:alice"
+    - "managed_item:spec_1#admin_edit@user:alice"
+    - "managed_item:spec_1#admin_delete@user:alice"
+
+    # Delegated editor (bob) has admin_edit via catalog, and charlie has admin_edit on spec_2:
+    - "managed_item:spec_1#admin_edit@user:bob"
+    - "managed_item:spec_2#admin_edit@user:bob"
+    - "managed_item:spec_2#admin_edit@user:charlie"
+
+  assertFalse:
+    # Delegated editor (bob) does NOT have admin_create or destructive admin_delete:
+    - "catalog:main#admin_create@user:bob"
+    - "managed_item:spec_1#admin_create@user:bob"
+    - "managed_item:spec_1#admin_delete@user:bob"
+    - "managed_item:spec_2#admin_delete@user:bob"
+
+    # Scoped editor (charlie) cannot edit spec_1 and cannot delete spec_2:
+    - "managed_item:spec_1#admin_edit@user:charlie"
+    - "managed_item:spec_2#admin_delete@user:charlie"
+
+    # Unrelated user (dave) has no capabilities at all:
+    - "managed_item:spec_1#admin_edit@user:dave"
+    - "managed_item:spec_1#admin_delete@user:dave"
