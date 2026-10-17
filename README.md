@@ -2,34 +2,71 @@
 
 [![Hex.pm](https://img.shields.io/hexpm/v/ash_authzed.svg)](https://hex.pm/packages/ash_authzed)
 [![HexDocs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/ash_authzed)
+[![Hex.pm Downloads](https://img.shields.io/hexpm/dt/ash_authzed.svg)](https://hex.pm/packages/ash_authzed)
 [![License](https://img.shields.io/hexpm/l/ash_authzed.svg)](https://github.com/boxxxie/ash_authzed/blob/master/LICENSE)
 
-**Declarative Relationship-Based Access Control (ReBAC) and Zanzibar-style permissions for [Ash Framework](https://ash-hq.org/), featuring pluggable Licet (embedded Postgres), SpiceDB HTTP, and In-Memory adapters, compile-time `.zed` / YAML schema verification, and automatic batched tuple synchronization.**
+**Declarative Relationship-Based Access Control (ReBAC) and Zanzibar-style permissions for the [Ash Framework](https://ash-hq.org/).**
 
-`AshAuthzed` extends `Ash.Resource` with a declarative Spark DSL (`authzed` / `rebac`) that connects Ash's policy engine (`Ash.Policy.Authorizer`) and resource lifecycle hooks (`AshAuthzed.SyncChange`) to [`Licet`](https://hex.pm/packages/licet) or [AuthZed / SpiceDB](https://authzed.com/).
+`AshAuthzed` extends `Ash.Resource` with a Spark DSL that bridges [`Ash.Policy.Authorizer`](https://hexdocs.pm/ash/Ash.Policy.Authorizer.html) and resource lifecycle hooks with [AuthZed / SpiceDB](https://authzed.com/) or [`Licet`](https://hex.pm/packages/licet) (an embedded Elixir/Postgres Zanzibar engine). Define your resource relationships once, verify them against your `.zed` or `.yaml` schema at compile time, and let `AshAuthzed` automatically keep your permission tuples in sync across single and bulk actions.
 
 ---
 
-## Key Capabilities
+## Quick Look
 
-- **Declarative Resource DSL (`AshAuthzed` / `AshRebac`)** — Configure Zanzibar `object_type`, direct `relation` tuples, `external_role` role-mapping tuples, and `conditional_wildcard` tags directly inside your `Ash.Resource` definition.
-- **Compile-Time Schema Verification (`AshAuthzed.Verifiers.VerifyZedSchema`)** — Cross-checks your Ash resource's `object_type`, relations, enum role mappings, and policy check permissions against your `.zed` or `.yaml` schema at compile time with "Did you mean?" Jaro-distance suggestions. Also registers `@external_resource` so edits to your schema file automatically re-verify your Ash resources.
-- **Pluggable Adapter Architecture (`AshAuthzed.Adapter`)**:
-  - `AshAuthzed.Adapters.Licet` (`:licet`) — Embedded Elixir Zanzibar engine backed by your existing `Ecto.Repo` (Postgres) with native SQL Sandbox and transaction support.
-  - `AshAuthzed.Adapters.SpiceDBHttp` (`:spicedb_http`) — Production HTTP/JSON client (`Req`) for external SpiceDB and AuthZed clusters (`/v1/permissions/*` and `/v1/relationships/write`).
-  - `AshAuthzed.Adapters.Memory` (`:memory`) — Caller-supervised, zero-DB in-memory `Licet` store for sub-millisecond `async: true` ExUnit tests.
-- **Native Ash Policy Checks (`AshAuthzed.Checks.Can` & `AshAuthzed.Checks.CanAssign`)** — Imported policy macros (`rebac_can/1,2` / `authzed_can/1,2` and `rebac_can_assign/2` / `authzed_can_assign/2`) that filter collection reads via `lookup_resources` and guard attribute/role assignments via `check?`.
-- **Atomic & Bulk Lifecycle Tuple Sync (`AshAuthzed.SyncChange`)** — Automatically wired by `AshAuthzed.Transformer` onto `:create`, `:update`, and `:destroy` actions. Supports single-record actions, atomic updates (`atomic/3`), and batched `Ash.bulk_create!`, `Ash.bulk_update!`, and `Ash.bulk_destroy!` (`after_batch/3`) with operation deduplication.
-- **Built-In Operational Mix Tasks**:
-  - `mix ash_authzed.install` — Igniter-powered installer (`mix igniter.install ash_authzed`) for automatic project scaffolding.
-  - `mix ash_authzed.backfill` (and alias `mix rebac.backfill`) — Streams existing database records in keyset-paginated batches and reconciles relationship tuples into Licet or SpiceDB.
-  - `mix ash_authzed.bench` — Benchmarks single creates, bulk creates, `Ash.can?`, collection reads, and atomic bulk role promotions across adapters.
+```elixir
+defmodule MyApp.Workspace.Document do
+  use Ash.Resource,
+    domain: MyApp.Workspace,
+    authorizers: [Ash.Policy.Authorizer],
+    extensions: [AshAuthzed]
+
+  authzed do
+    object_type "document"
+    schema_path "priv/authzed/schema.zed"
+
+    relation :organization, subject_type: "organization", subject_id: :organization_id
+    relation :owner, subject_type: "user", subject_id: :owner_id
+    external_role :role, target: "organization:main", subject_type: "user", subject_id: :owner_id
+  end
+
+  policies do
+    # Filters collection reads via lookup_resources & guards actions via check_permission
+    policy action_type(:read) do
+      authorize_if authzed_can(:view)
+    end
+
+    policy action(:update) do
+      authorize_if authzed_can(:edit)
+    end
+  end
+end
+```
+
+---
+
+## Key Features
+
+- **Declarative Resource DSL** — Map Zanzibar `object_type`, direct `relation` tuples, `external_role` mappings, and `conditional_wildcard` rules directly inside your `Ash.Resource` definitions (`authzed` / `rebac` DSL sections).
+- **Compile-Time Schema Verification** — Validates your resource's `object_type`, relations, enum role mappings, and policy check permissions against your `.zed` or `.yaml` schema at compile time—complete with *"Did you mean?"* Jaro-distance suggestions and automatic `@external_resource` recompilation when your schema file changes.
+- **Native Ash Policy Checks** — Use `authzed_can/1,2` and `authzed_can_assign/2` (or their `rebac_*` aliases) inside `policies` blocks to filter collection reads via `lookup_resources` and authorize mutations or role assignments via `check?`.
+- **Automatic & Batched Tuple Synchronization** — Automatically wires lifecycle hooks onto `:create`, `:update`, and `:destroy` actions. Supports single-record mutations, atomic updates, and deduplicated batch writes across `Ash.bulk_create!`, `Ash.bulk_update!`, and `Ash.bulk_destroy!`.
+- **Built-In Mix Tasks** — Includes `mix ash_authzed.install` (Igniter installer), `mix ash_authzed.backfill` (keyset-paginated tuple reconciliation for existing records), and `mix ash_authzed.bench` (cross-adapter throughput benchmarking).
+
+## Pluggable Adapters
+
+Choose the backing engine that fits your environment without changing a line of resource or policy code:
+
+| Adapter | Option | Backing Store | Best For |
+| :--- | :--- | :--- | :--- |
+| `AshAuthzed.Adapters.Licet` | `:licet` | Existing `Ecto.Repo` (Postgres) | Zero-infrastructure setups needing native Ecto SQL Sandbox & transaction support |
+| `AshAuthzed.Adapters.SpiceDBHttp` | `:spicedb_http` | SpiceDB / AuthZed HTTP API (`Req`) | Multi-service or high-scale production clusters (`/v1/permissions/*`, `/v1/relationships/write`) |
+| `AshAuthzed.Adapters.Memory` | `:memory` | Caller-supervised in-memory `Licet` | Sub-millisecond, zero-DB `async: true` ExUnit tests |
 
 ---
 
 ## Installation
 
-### With Igniter (Recommended)
+### Using Igniter (Recommended)
 
 If your project uses [Igniter](https://hexdocs.pm/igniter), install and configure `ash_authzed` automatically:
 
@@ -43,7 +80,7 @@ mix igniter.install ash_authzed --adapter spicedb --yes
 
 ### Manual Installation
 
-Add `ash_authzed` to your dependencies in `mix.exs`:
+1. Add `:ash_authzed` to your dependencies in `mix.exs`:
 
 ```elixir
 def deps do
@@ -55,7 +92,7 @@ def deps do
 end
 ```
 
-Add `:ash_authzed` to your `.formatter.exs` so Spark DSL blocks and policy macros format without extra parentheses:
+2. Add `:ash_authzed` to your `.formatter.exs` so `mix format` preserves DSL syntax without parentheses:
 
 ```elixir
 [
@@ -66,7 +103,7 @@ Add `:ash_authzed` to your `.formatter.exs` so Spark DSL blocks and policy macro
 
 ---
 
-## Configuration & Adapters
+## Configuration
 
 `AshAuthzed` uses a behaviour-driven adapter interface (`AshAuthzed.Adapter`) configurable per resource (`adapter` and `adapter_opts` in the `authzed` DSL block) or globally via application configuration.
 
@@ -98,19 +135,6 @@ config :ash_authzed,
     url: System.fetch_env!("SPICEDB_HTTP_URL"),
     token: System.fetch_env!("SPICEDB_TOKEN")
   ]
-```
-
-### 3. Caller-Supervised In-Memory Adapter (`:memory`)
-
-Runs `Licet` against an in-memory `Agent` tuple store—ideal for fast, isolated `async: true` tests without Postgres or Docker:
-
-```elixir
-start_supervised!(
-  {AshAuthzed.Adapters.Memory,
-   name: MyTestAuthzed,
-   schema: {:file, "priv/licet/schema.zed"},
-   relationships: ["platform:main#super_admin@user:root"]}
-)
 ```
 
 ---
@@ -176,20 +200,20 @@ defmodule MyApp.Accounts.User do
 
   policies do
     policy action(:read) do
-      authorize_if rebac_can(:view)
+      authorize_if authzed_can(:view)
     end
 
     policy action(:update_profile) do
-      authorize_if rebac_can(:edit)
+      authorize_if authzed_can(:edit)
     end
 
     policy action(:destroy) do
-      authorize_if rebac_can(:delete)
+      authorize_if authzed_can(:delete)
     end
 
     policy action(:change_role) do
-      forbid_unless rebac_can_assign(:role, on: "platform:main")
-      authorize_if rebac_can(:change_role)
+      forbid_unless authzed_can_assign(:role, on: "platform:main")
+      authorize_if authzed_can(:change_role)
     end
   end
 
@@ -210,6 +234,38 @@ end
 
 ---
 
+## Testing (`async: true`)
+
+`AshAuthzed` supports fast, isolated `async: true` ExUnit tests out of the box—either via `Licet` with Ecto's SQL Sandbox or via `AshAuthzed.Adapters.Memory`, which runs a caller-supervised in-memory tuple store without requiring Postgres or a SpiceDB container:
+
+```elixir
+defmodule MyApp.Accounts.UserPolicyTest do
+  use ExUnit.Case, async: true
+
+  setup do
+    start_supervised!(
+      {AshAuthzed.Adapters.Memory,
+       name: MyTestAuthzed,
+       schema: {:file, "priv/licet/schema.zed"},
+       relationships: ["platform:main#super_admin@user:root"]}
+    )
+
+    :ok
+  end
+
+  test "authorizes profile updates for the owner" do
+    user =
+      MyApp.Accounts.User
+      |> Ash.Changeset.for_create(:create, %{id: "u1", name: "Alice", email: "alice@example.com"})
+      |> Ash.create!(authorize?: false)
+
+    assert Ash.can?({user, :update_profile}, user)
+  end
+end
+```
+
+---
+
 ## Compile-Time Schema Verification
 
 `AshAuthzed.Verifiers.VerifyZedSchema` runs automatically after DSL compilation and verifies against your `.zed` file or Licet `.yaml` validation bundle:
@@ -217,7 +273,7 @@ end
 1. **`object_type` Existence**: Ensures `definition <object_type>` exists in your schema.
 2. **Entity Relations (`relation` & `conditional_wildcard`)**: Ensures every declared relation exists on `definition <object_type>`.
 3. **External Role Enum Exhaustiveness (`external_role`)**: Inspects the attribute's `one_of` constraints (or `Ash.Type.Enum` values), applies `role_mapping`, and verifies that every possible enum value maps to a defined `relation` on the target definition.
-4. **Policy Checks (`rebac_can` & `rebac_can_assign`)**: Verifies that every permission checked in `policies` exists on the resource definition, and that every `assign_<role>` permission exists on the target definition for `rebac_can_assign`.
+4. **Policy Checks (`authzed_can` & `authzed_can_assign`)**: Verifies that every permission checked in `policies` exists on the resource definition, and that every `assign_<role>` permission exists on the target definition for `authzed_can_assign`.
 
 If any mismatch is detected, compilation fails immediately with a `Spark.Error.DslError` and a Jaro-distance `"Did you mean ...?"` hint.
 
@@ -253,43 +309,30 @@ mix ash_authzed.bench --count 200 --compare-spicedb
 
 ---
 
-## Telemetry & Error Handling
+## Telemetry & Observability
 
-- **Telemetry**: `AshAuthzed.Adapter` wraps operations in `:telemetry.span/3` events:
-  - `[:ash_authzed, :check, :start | :stop | :exception]`
-  - `[:ash_authzed, :lookup_resources, :start | :stop | :exception]`
-  - `[:ash_authzed, :write_tuples, :start | :stop | :exception]`
-  - `[:ash_authzed, :adapter, :write_tuples]` (emits `%{tuple_count: count}` measurements for batch verification)
-- **Structured Exceptions**: Adapter and validation failures return `%AshAuthzed.Error{reason: atom(), details: term()}` exceptions.
+`AshAuthzed.Adapter` wraps all permission checks, resource lookups, and tuple writes in `:telemetry` events so you can monitor authorization latency and batch sizes:
+
+| Event | Measurements | Metadata |
+| :--- | :--- | :--- |
+| `[:ash_authzed, :check, :start \| :stop \| :exception]` | `duration`, `monotonic_time` | `adapter`, `resource`, `permission`, `subject`, `status` |
+| `[:ash_authzed, :lookup_resources, :start \| :stop \| :exception]` | `duration`, `monotonic_time` | `adapter`, `resource_type`, `permission`, `subject`, `status` |
+| `[:ash_authzed, :write_tuples, :start \| :stop \| :exception]` | `duration`, `monotonic_time` | `adapter`, `operation_count`, `operations`, `status` |
+| `[:ash_authzed, :adapter, :write_tuples]` | `tuple_count` | `adapter`, `operations` |
+
+Adapter and validation failures return structured `%AshAuthzed.Error{reason: atom(), details: term()}` exceptions.
 
 ---
 
-## Architecture Overview
+## Documentation & AI Usage Rules
 
-```text
-lib/
-├── ash_authzed.ex                         # Spark DSL extension, backfill/2, and AshRebac alias
-├── ash_authzed/
-│   ├── adapter.ex                         # Behaviour contract & telemetry dispatcher
-│   ├── adapters/
-│   │   ├── licet.ex                       # Embedded Postgres/Ecto Licet adapter
-│   │   ├── spicedb_http.ex                # SpiceDB HTTP/JSON client adapter (Req)
-│   │   └── memory.ex                      # Caller-supervised in-memory Licet adapter
-│   ├── checks.ex                          # Ash.Policy.FilterCheck (Can) & SimpleCheck (CanAssign)
-│   ├── error.ex                           # Structured AshAuthzed.Error exception
-│   ├── sync_change.ex                     # Ash.Resource.Change (atomic + after_batch tuple sync)
-│   ├── transformer.ex                     # Spark DSL transformer & PolicyMacros (rebac_can)
-│   └── verifiers/
-│       └── verify_zed_schema.ex           # Compile-time .zed / YAML schema verifier
-└── mix/tasks/
-    ├── ash_authzed.install.ex             # Igniter project installer
-    ├── ash_authzed.backfill.ex            # Relationship tuple backfill task
-    ├── ash_authzed.bench.ex               # Adapter performance benchmark task
-    └── rebac.backfill.ex                  # Delegated alias for ash_authzed.backfill
-```
+- **[Getting Started Tutorial](documentation/tutorials/getting-started-with-ash-authzed.md)** — Step-by-step guide to defining a `.zed` schema, configuring an adapter, and writing your first ReBAC policies.
+- **[DSL Reference (`AshAuthzed`)](documentation/dsls/DSL-AshAuthzed.md)** — Complete reference for the `authzed` / `rebac` DSL sections, entities (`relation`, `external_role`, `conditional_wildcard`), and options.
+- **[AI & LLM Usage Rules (`usage-rules.md`)](usage-rules.md)** — Ships with a [`usage_rules`](https://hex.pm/packages/usage_rules)-compatible rules file. Run `mix usage_rules.sync` to automatically inject `AshAuthzed` best practices into your project's `AGENTS.md` or `CLAUDE.md`.
 
 ---
 
 ## License
 
 Released under the [MIT License](https://github.com/boxxxie/ash_authzed/blob/main/LICENSE).
+
