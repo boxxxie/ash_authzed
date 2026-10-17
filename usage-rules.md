@@ -55,7 +55,33 @@ end
 # ✅ DO: Use `from_zed: true` (or `from_zed: "priv/authzed/schema.zed"`) and `derive_policies: true`
 # when you want single-subject relations (`:<relation>_id`) and `Ash.Policy.Authorizer` policies
 # automatically derived from the `.zed` definition (grouped by `action_type` with OR semantics).
-# Override static subjects or union/subject-set relations (`user | group#member`) explicitly in `authzed`.
+# Override static subjects or union/subject-set relations (`user | group#member`) explicitly in `authzed`:
+defmodule MyApp.Workspace.Document do
+  use Ash.Resource,
+    domain: MyApp.Workspace,
+    authorizers: [Ash.Policy.Authorizer],
+    extensions: [AshAuthzed]
+
+  attributes do
+    uuid_primary_key :id
+    attribute :owner_id, :uuid, allow_nil?: false, public?: true
+    attribute :organization_id, :uuid, allow_nil?: false, public?: true
+  end
+
+  actions do
+    defaults [:read, :create, :update, :destroy]
+  end
+
+  authzed do
+    object_type "document"
+    from_zed "priv/authzed/schema.zed"
+    # Or pass a keyword list/map: `derive_policies [view: :read, edit: :update, delete: :destroy]`
+    derive_policies true
+
+    # Explicit relations take precedence over auto-derived ones:
+    relation :platform, static_subject: "platform:main"
+  end
+end
 
 # ❌ DON'T: Do not invent `resource_type`, `field:`, `condition: expr(...)`, or nested `sync do ... end` blocks
 ```
@@ -138,8 +164,9 @@ end
 | `:spicedb_http` | `AshAuthzed.Adapters.SpiceDBHttp` | `url: "http://localhost:8443"`, `token: "secret"`, `req_options: [...]` |
 | `:memory` | `AshAuthzed.Adapters.Memory` | `store: MyTestStore`, `timeout: 5_000` |
 
-### Testing Rules
+### Testing & Runtime Schema Lifecycle Rules
 - **Caller-Supervised Memory Store**: Start `AshAuthzed.Adapters.Memory` via `start_supervised!/1` with a unique `:name` per test for `async: true` safety.
+- **Applying Schemas Programmatically**: Use `AshAuthzed.apply_schema(path_or_zed_text, adapter_opts)` to push `.zed` or `.yaml` validation schemas at runtime to `:licet`, `:spicedb_http`, or `:memory`.
 - **Seed Fixtures with `authorize?: false`**: When creating prerequisite records in test `setup` blocks, pass `authorize?: false` so `AshAuthzed.SyncChange` writes initial tuples without requiring an already-authorized actor.
 - **Asserting Read vs. Write Policies**:
   - **Reads** filter unauthorized records rather than raising: assert on the returned list.
