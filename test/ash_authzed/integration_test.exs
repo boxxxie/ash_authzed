@@ -3,7 +3,7 @@ defmodule AshAuthzed.IntegrationTest do
 
   alias AshAuthzed.Adapters.Memory
   alias AshAuthzed.Test.User
-  alias Mix.Tasks.Rebac.Backfill
+  alias Mix.Tasks.AshAuthzed.Backfill
 
   setup do
     {:ok, parsed} = Licet.Validate.parse(File.read!("priv/licet/user_permissions.yaml"))
@@ -294,7 +294,7 @@ defmodule AshAuthzed.IntegrationTest do
     end
   end
 
-  describe "AshAuthzed.backfill/2 and Mix.Tasks.Rebac.Backfill" do
+  describe "AshAuthzed.backfill/2 and Mix.Tasks.AshAuthzed.Backfill" do
     test "restores missing tuples and reconciles stale out-of-band role changes", %{
       root: root,
       alice: alice,
@@ -345,7 +345,7 @@ defmodule AshAuthzed.IntegrationTest do
       assert Ash.can?({alice, :update_profile, %{name: "Root Edit"}}, root)
     end
 
-    test "Mix.Tasks.Rebac.Backfill runs cleanly via CLI flags", %{
+    test "Mix.Tasks.AshAuthzed.Backfill runs cleanly via CLI flags", %{
       charlie: charlie
     } do
       # Wipe Charlie's owner tuple manually to simulate missing ReBAC state

@@ -45,14 +45,13 @@ defmodule AshAuthzed.Test.AdminCapabilities.Item do
     relation :catalog, static_subject: "catalog:main"
 
     external_role :capability,
-      target: "catalog:main",
       subject_type: "user",
       subject_id: :admin_id
   end
 
   policies do
     policy action(:create) do
-      authorize_if authzed_can(:admin_create, on: "catalog:main")
+      authorize_if authzed_can(:admin_create, target: "catalog:main")
     end
 
     policy action(:update) do

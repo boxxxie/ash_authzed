@@ -6,7 +6,6 @@ defmodule Mix.Tasks.AshAuthzed.BackfillTest do
   alias AshAuthzed.Test.User
   alias Mix.Tasks.AshAuthzed.Backfill
   alias Mix.Tasks.AshAuthzed.Bench
-  alias Mix.Tasks.Rebac.Backfill, as: RebacBackfill
 
   setup do
     {:ok, parsed} = Licet.Validate.parse(File.read!("priv/licet/user_permissions.yaml"))
@@ -28,7 +27,7 @@ defmodule Mix.Tasks.AshAuthzed.BackfillTest do
     %{users: users}
   end
 
-  describe "Mix.Tasks.AshAuthzed.Backfill & Mix.Tasks.Rebac.Backfill" do
+  describe "Mix.Tasks.AshAuthzed.Backfill" do
     test "backfills missing tuples, supports batch pagination, and is idempotent when run twice" do
       # Clear the memory store so we can verify backfill from a blank ReBAC state
       existing = Memory.list_tuples(AshAuthzed.Test.MemoryStore)
@@ -59,7 +58,7 @@ defmodule Mix.Tasks.AshAuthzed.BackfillTest do
 
       # 2. Second run (idempotency): produces identical tuple set with no duplicates
       ExUnit.CaptureIO.capture_io(fn ->
-        RebacBackfill.run(["--domain", inspect(Accounts), "--batch-size", "2"])
+        Backfill.run(["--domain", inspect(Accounts), "--batch-size", "2"])
       end)
 
       assert Memory.list_tuples(AshAuthzed.Test.MemoryStore) == tuples_after_first

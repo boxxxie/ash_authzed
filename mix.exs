@@ -79,7 +79,6 @@ defmodule AshAuthzed.MixProject do
       },
       files: ~w(
         lib
-        priv
         documentation
         usage-rules.md
         .formatter.exs

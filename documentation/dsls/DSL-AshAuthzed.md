@@ -107,7 +107,7 @@ external_role attribute
 ```
 
 
-Syncs a resource attribute as a relation on an external target resource.
+Syncs a resource attribute as a relation on the resource itself (`:self`) or an external target object.
 
 
 
@@ -117,12 +117,12 @@ Syncs a resource attribute as a relation on an external target resource.
 
 | Name | Type | Default | Docs |
 |------|------|---------|------|
-| [`attribute`](#authzed-external_role-attribute){: #authzed-external_role-attribute .spark-required} | `atom` |  | The attribute on the resource holding the role name. |
+| [`attribute`](#authzed-external_role-attribute){: #authzed-external_role-attribute .spark-required} | `atom` |  | The attribute on the resource holding the role or capability name. |
 ### Options
 
 | Name | Type | Default | Docs |
 |------|------|---------|------|
-| [`target`](#authzed-external_role-target){: #authzed-external_role-target .spark-required} | `String.t` |  | The target object (`"type:id"`) on which the role relation is written. |
+| [`target`](#authzed-external_role-target){: #authzed-external_role-target } | `String.t \| :self` | `:self` | The target object (`"type:id"`) on which the role relation is written, or `:self` (default) to target the resource instance itself (`"<object_type>:<id>"`). |
 | [`subject_type`](#authzed-external_role-subject_type){: #authzed-external_role-subject_type } | `String.t` | `"user"` | The subject type. |
 | [`subject_id`](#authzed-external_role-subject_id){: #authzed-external_role-subject_id } | `atom` | `:id` | The attribute holding the subject ID. |
 | [`role_mapping`](#authzed-external_role-role_mapping){: #authzed-external_role-role_mapping } | `map` | `%{}` | Optional map translating attribute values to schema relation names (e.g. `%{user: "member"}`). |
@@ -235,7 +235,7 @@ external_role attribute
 ```
 
 
-Syncs a resource attribute as a relation on an external target resource.
+Syncs a resource attribute as a relation on the resource itself (`:self`) or an external target object.
 
 
 
@@ -245,12 +245,12 @@ Syncs a resource attribute as a relation on an external target resource.
 
 | Name | Type | Default | Docs |
 |------|------|---------|------|
-| [`attribute`](#rebac-external_role-attribute){: #rebac-external_role-attribute .spark-required} | `atom` |  | The attribute on the resource holding the role name. |
+| [`attribute`](#rebac-external_role-attribute){: #rebac-external_role-attribute .spark-required} | `atom` |  | The attribute on the resource holding the role or capability name. |
 ### Options
 
 | Name | Type | Default | Docs |
 |------|------|---------|------|
-| [`target`](#rebac-external_role-target){: #rebac-external_role-target .spark-required} | `String.t` |  | The target object (`"type:id"`) on which the role relation is written. |
+| [`target`](#rebac-external_role-target){: #rebac-external_role-target } | `String.t \| :self` | `:self` | The target object (`"type:id"`) on which the role relation is written, or `:self` (default) to target the resource instance itself (`"<object_type>:<id>"`). |
 | [`subject_type`](#rebac-external_role-subject_type){: #rebac-external_role-subject_type } | `String.t` | `"user"` | The subject type. |
 | [`subject_id`](#rebac-external_role-subject_id){: #rebac-external_role-subject_id } | `atom` | `:id` | The attribute holding the subject ID. |
 | [`role_mapping`](#rebac-external_role-role_mapping){: #rebac-external_role-role_mapping } | `map` | `%{}` | Optional map translating attribute values to schema relation names (e.g. `%{user: "member"}`). |

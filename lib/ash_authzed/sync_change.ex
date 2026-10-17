@@ -170,11 +170,11 @@ defmodule AshAuthzed.SyncChange do
   defp build_entity_ops(
          %ExternalRole{} = ext_role,
          resource,
-         _obj_prefix,
+         obj_prefix,
          action_type,
          {old_record, new_record}
        ) do
-    build_external_role_ops(resource, action_type, old_record, new_record, ext_role)
+    build_external_role_ops(resource, obj_prefix, action_type, old_record, new_record, ext_role)
   end
 
   defp build_entity_ops(
@@ -201,6 +201,7 @@ defmodule AshAuthzed.SyncChange do
 
   defp build_external_role_ops(
          resource,
+         obj_prefix,
          action_type,
          old_record,
          new_record,
@@ -212,6 +213,13 @@ defmodule AshAuthzed.SyncChange do
            role_mapping: mapping
          }
        ) do
+    resolved_target =
+      if target in [nil, :self] do
+        obj_prefix
+      else
+        target
+      end
+
     subj = "#{s_type}:#{Map.get(new_record, field)}"
     new_val = Map.get(new_record, attr)
     new_rel = map_role(new_val, mapping)
@@ -221,7 +229,7 @@ defmodule AshAuthzed.SyncChange do
       action_type,
       old_record,
       attr,
-      target,
+      resolved_target,
       subj,
       {new_val, new_rel, mapping}
     )

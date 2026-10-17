@@ -324,16 +324,16 @@ defmodule MyApp.Catalog.ManagedItem do
     # Links item to catalog: `managed_item:<id>#catalog@catalog:main`
     relation :catalog, static_subject: "catalog:main"
 
-    # Or map a role/capability attribute (`:admin`, `:can_create`, `:can_edit`, `:can_delete`)
+    # Syncs per-item capability (`managed_item:<id>#<capability>@user:<admin_id>`);
+    # pass `target: "catalog:main"` when granting catalog-wide roles instead
     external_role :capability,
-      target: "catalog:main",
       subject_type: "user",
       subject_id: :admin_id
   end
 
   policies do
     policy action(:create) do
-      authorize_if authzed_can(:admin_create, on: "catalog:main")
+      authorize_if authzed_can(:admin_create, target: "catalog:main")
     end
 
     policy action(:update) do
@@ -342,6 +342,10 @@ defmodule MyApp.Catalog.ManagedItem do
 
     policy action(:destroy) do
       authorize_if authzed_can(:admin_delete)
+    end
+
+    policy action_type(:read) do
+      authorize_if authzed_can(:admin_edit)
     end
   end
 end
@@ -410,8 +414,6 @@ mix ash_authzed.backfill --resource MyApp.Accounts.User --batch-size 250
 # Preview tuple operation counts without writing to the adapter
 mix ash_authzed.backfill --dry-run
 ```
-
-*(Note: `mix rebac.backfill` is also available as a convenience alias.)*
 
 ### Benchmarking Adapters (`mix ash_authzed.bench`)
 

@@ -57,46 +57,47 @@ end
 
 ---
 
-## Authorization Policies (`rebac_can/1,2` & `rebac_can_assign/2`)
+## Authorization Policies (`authzed_can/1,2` & `authzed_can_assign/2`)
 
 `AshAuthzed.PolicyMacros` is automatically imported into every resource that uses `AshAuthzed`:
 
-- **`rebac_can(permission, opts \\ [])`** (alias `authzed_can/1,2`):
+- **`authzed_can(permission, opts \\ [])`** (alias `rebac_can/1,2`):
   - Expands to `{AshAuthzed.Checks.Can, [permission: permission, ...]}` (`Ash.Policy.FilterCheck`).
   - On **read** actions, filters queries via `AshAuthzed.Adapter.lookup_resources/4` (`expr(^ref(id_attr) in ^allowed_ids)`).
   - On **update/destroy** actions and `Ash.can?`, checks whether the current actor holds `permission` on the target record(s).
-- **`rebac_can_assign(attribute, opts)`** (alias `authzed_can_assign/2`):
+  - On **create** actions (where the record does not exist yet in the ReBAC store), pass `target: "type:id"` (or `on: "type:id"`) to evaluate `permission` on the parent container object via `AshAuthzed.Adapter.check?/4`.
+- **`authzed_can_assign(attribute, opts)`** (alias `rebac_can_assign/2`):
   - Expands to `{AshAuthzed.Checks.CanAssign, [attribute: attribute, on: target, ...]}` (`Ash.Policy.SimpleCheck`).
-  - Inspects the incoming attribute value on create/update changesets and verifies `Adapter.check?(opts[:on], "#{prefix}#{new_val}", subject, adapter_opts)` (defaults to `prefix: "assign_"`).
+  - Inspects the incoming attribute value on create/update changesets and verifies `Adapter.check?(opts[:on] || opts[:target], "#{prefix}#{new_val}", subject, adapter_opts)` (defaults to `prefix: "assign_"`).
 
 ```elixir
-# ✅ DO: Use `rebac_can/1` for resource permissions and `rebac_can_assign/2` for role/attribute assignment guards
+# ✅ DO: Use `authzed_can/1` for resource permissions and `authzed_can_assign/2` for role/attribute assignment guards
 policies do
   policy action(:read) do
-    authorize_if rebac_can(:view)
+    authorize_if authzed_can(:view)
   end
 
   policy action(:update_profile) do
-    authorize_if rebac_can(:edit)
+    authorize_if authzed_can(:edit)
   end
 
   policy action(:destroy) do
-    authorize_if rebac_can(:delete)
+    authorize_if authzed_can(:delete)
   end
 
   policy action(:change_role) do
-    forbid_unless rebac_can_assign(:role, on: "platform:main")
-    authorize_if rebac_can(:change_role)
+    forbid_unless authzed_can_assign(:role, on: "platform:main")
+    authorize_if authzed_can(:change_role)
   end
 end
 
-# ✅ DO: Prefer capability-named permissions in `authzed_can/1,2` (e.g., `authzed_can(:admin_create, on: "catalog:main")`,
+# ✅ DO: Prefer capability-named permissions in `authzed_can/1,2` (e.g., `authzed_can(:admin_create, target: "catalog:main")`,
 # `authzed_can(:admin_edit)`, `authzed_can(:admin_delete)`) over checking role names directly in Ash
 # policies. For `:create` actions (where the record ID does not exist yet in the ReBAC store), pass
-# `on: "type:id"` to evaluate the capability on the parent/container object synchronously:
+# `target: "type:id"` (or `on: "type:id"`) to evaluate the capability on the parent/container object synchronously:
 policies do
   policy action(:create) do
-    authorize_if authzed_can(:admin_create, on: "catalog:main")
+    authorize_if authzed_can(:admin_create, target: "catalog:main")
   end
 
   policy action(:update) do
@@ -105,6 +106,19 @@ policies do
 
   policy action(:destroy) do
     authorize_if authzed_can(:admin_delete)
+  end
+
+  policy action_type(:read) do
+    authorize_if authzed_can(:admin_edit)
+  end
+end
+
+# ❌ DON'T: Check coarse role names or raw attributes in Ash policies when capabilities
+# are modeled in your schema—this bypasses delegated capability grants (like `can_edit`):
+policies do
+  policy action(:update) do
+    # Bad: blocks actors who have `can_edit` or inherited `catalog->admin_edit`
+    authorize_if authzed_can(:admin)
   end
 end
 ```
@@ -131,6 +145,6 @@ end
 ## Operational Mix Tasks
 
 - `mix igniter.install ash_authzed --yes` — Installs and configures `AshAuthzed` via Igniter (always pass `--yes` in non-interactive sessions).
-- `mix ash_authzed.backfill` (or `mix rebac.backfill`) — Streams existing Ash resources and reconciles relationship tuples in batches (`--resource`, `--domain`, `--batch-size`, `--dry-run`, `--no-reconcile`).
+- `mix ash_authzed.backfill` — Streams existing Ash resources and reconciles relationship tuples in batches (`--resource`, `--domain`, `--batch-size`, `--dry-run`, `--no-reconcile`).
 - `mix ash_authzed.bench` — Benchmarks single creates, bulk creates, `Ash.can?`, collection reads, and atomic bulk updates across adapters.
 - `mix spark.cheat_sheets --extensions AshAuthzed` — Regenerates `documentation/dsls/DSL-AshAuthzed.md` after modifying the Spark DSL schema.

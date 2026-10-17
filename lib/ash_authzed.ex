@@ -59,8 +59,9 @@ defmodule AshAuthzed do
 
   defmodule ExternalRole do
     @moduledoc """
-    Represents a role attribute on the resource that maps to a relation on an external object
-    (e.g., `platform:main#<role>@user:<id>`).
+    Represents a role or capability attribute on the resource that maps to a relation
+    on the resource instance itself (`:self`, the default) or an external object
+    (e.g., `target: "platform:main"` -> `platform:main#<role>@user:<id>`).
     """
     defstruct [
       :attribute,
@@ -73,7 +74,7 @@ defmodule AshAuthzed do
 
     @type t :: %__MODULE__{
             attribute: atom(),
-            target: String.t(),
+            target: String.t() | :self | nil,
             subject_type: String.t(),
             subject_id: atom(),
             role_mapping: map(),
@@ -118,19 +119,21 @@ defmodule AshAuthzed do
 
   @external_role %Spark.Dsl.Entity{
     name: :external_role,
-    describe: "Syncs a resource attribute as a relation on an external target resource.",
+    describe:
+      "Syncs a resource attribute as a relation on the resource itself (`:self`) or an external target object.",
     target: ExternalRole,
     args: [:attribute],
     schema: [
       attribute: [
         type: :atom,
         required: true,
-        doc: "The attribute on the resource holding the role name."
+        doc: "The attribute on the resource holding the role or capability name."
       ],
       target: [
-        type: :string,
-        required: true,
-        doc: "The target object (`\"type:id\"`) on which the role relation is written."
+        type: {:or, [:string, {:in, [:self]}]},
+        default: :self,
+        doc:
+          "The target object (`\"type:id\"`) on which the role relation is written, or `:self` (default) to target the resource instance itself (`\"<object_type>:<id>\"`)."
       ],
       subject_type: [type: :string, default: "user", doc: "The subject type."],
       subject_id: [

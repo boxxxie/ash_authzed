@@ -142,18 +142,32 @@ defmodule AshAuthzed.Verifiers.VerifyZedSchema do
   defp verify_entity(
          %{attribute: attr, target: target} = ext_role,
          dsl_state,
-         _obj_type,
-         _zed_def,
+         obj_type,
+         zed_def,
          defs,
          module
        ) do
-    [target_type, _target_id] = String.split(target, ":", parts: 2)
     role_mapping = Map.get(ext_role, :role_mapping) || %{}
     path = [:authzed, :external_role, attr]
 
-    with {:ok, target_def} <- fetch_target_def(defs, target_type, path, module),
+    with {:ok, target_type, target_def} <-
+           resolve_external_role_target(target, obj_type, zed_def, defs, path, module),
          {:ok, enum_vals} <- fetch_attribute_enum_values(dsl_state, attr, path, module) do
       verify_external_role_values(enum_vals, role_mapping, target_def, target_type, attr, module)
+    end
+  end
+
+  defp resolve_external_role_target(target, obj_type, zed_def, _defs, _path, _module)
+       when target in [nil, :self] do
+    {:ok, obj_type, zed_def}
+  end
+
+  defp resolve_external_role_target(target, _obj_type, _zed_def, defs, path, module)
+       when is_binary(target) do
+    [target_type, _target_id] = String.split(target, ":", parts: 2)
+
+    with {:ok, target_def} <- fetch_target_def(defs, target_type, path, module) do
+      {:ok, target_type, target_def}
     end
   end
 
@@ -206,9 +220,11 @@ defmodule AshAuthzed.Verifiers.VerifyZedSchema do
   end
 
   defp verify_policy_check(opts, dsl_state, obj_type, zed_def, defs, module) do
+    static_target = opts[:target] || opts[:on]
+
     cond do
-      Keyword.has_key?(opts, :permission) and is_binary(opts[:on]) ->
-        [target_type, _] = String.split(opts[:on], ":", parts: 2)
+      Keyword.has_key?(opts, :permission) and is_binary(static_target) ->
+        [target_type, _] = String.split(static_target, ":", parts: 2)
 
         with {:ok, target_def} <-
                fetch_target_def(defs, target_type, [:policies, :policy, :authorize_if], module) do
@@ -218,8 +234,8 @@ defmodule AshAuthzed.Verifiers.VerifyZedSchema do
       Keyword.has_key?(opts, :permission) ->
         verify_permission_check(opts[:permission], obj_type, zed_def, module)
 
-      Keyword.has_key?(opts, :attribute) and Keyword.has_key?(opts, :on) ->
-        verify_can_assign_check(opts, dsl_state, defs, module)
+      Keyword.has_key?(opts, :attribute) and is_binary(static_target) ->
+        verify_can_assign_check(opts, static_target, dsl_state, defs, module)
 
       true ->
         :ok
@@ -245,9 +261,9 @@ defmodule AshAuthzed.Verifiers.VerifyZedSchema do
     end
   end
 
-  defp verify_can_assign_check(opts, dsl_state, defs, module) do
+  defp verify_can_assign_check(opts, static_target, dsl_state, defs, module) do
     attr = opts[:attribute]
-    [target_type, _] = String.split(opts[:on], ":", parts: 2)
+    [target_type, _] = String.split(static_target, ":", parts: 2)
     prefix = Keyword.get(opts, :permission_prefix, Keyword.get(opts, :prefix, "assign_"))
 
     with {:ok, target_def} <- fetch_target_def(defs, target_type, [:policies, :policy], module),

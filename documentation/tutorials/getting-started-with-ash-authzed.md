@@ -204,7 +204,7 @@ During compilation:
 
 ---
 
-## 5. Writing Policies with `rebac_can/1,2` and `rebac_can_assign/2`
+## 5. Writing Policies with `authzed_can/1,2` and `authzed_can_assign/2`
 
 Add a `policies` block to your resource using the imported `AshAuthzed.PolicyMacros`:
 
@@ -212,22 +212,22 @@ Add a `policies` block to your resource using the imported `AshAuthzed.PolicyMac
   policies do
     # 1. Read actions: filters the query via `lookup_resources` to only records the actor can `:view`
     policy action(:read) do
-      authorize_if rebac_can(:view)
+      authorize_if authzed_can(:view)
     end
 
     # 2. Update & Destroy actions: checks `:edit` / `:delete` permission on the target record
     policy action(:update_profile) do
-      authorize_if rebac_can(:edit)
+      authorize_if authzed_can(:edit)
     end
 
     policy action(:destroy) do
-      authorize_if rebac_can(:delete)
+      authorize_if authzed_can(:delete)
     end
 
     # 3. Role Assignment: verifies both `platform:main#assign_<new_role>` AND `user_profile:<id>#change_role`
     policy action(:change_role) do
-      forbid_unless rebac_can_assign(:role, on: "platform:main")
-      authorize_if rebac_can(:change_role)
+      forbid_unless authzed_can_assign(:role, on: "platform:main")
+      authorize_if authzed_can(:change_role)
     end
   end
 ```
@@ -240,8 +240,6 @@ If you are integrating `AshAuthzed` into an application that already has rows in
 
 ```bash
 mix ash_authzed.backfill
-# Or use the alias:
-mix rebac.backfill
 ```
 
 ---
@@ -293,7 +291,7 @@ definition managed_item {
 }
 ```
 
-In your `Ash.Resource`, each action checks its corresponding capability via `authzed_can/1`:
+In your `Ash.Resource`, each action checks its corresponding capability via `authzed_can/1,2`:
 
 ```elixir
 defmodule MyApp.Catalog.ManagedItem do
@@ -309,14 +307,13 @@ defmodule MyApp.Catalog.ManagedItem do
     relation :catalog, static_subject: "catalog:main"
 
     external_role :capability,
-      target: "catalog:main",
       subject_type: "user",
       subject_id: :admin_id
   end
 
   policies do
     policy action(:create) do
-      authorize_if authzed_can(:admin_create, on: "catalog:main")
+      authorize_if authzed_can(:admin_create, target: "catalog:main")
     end
 
     policy action(:update) do
@@ -325,6 +322,10 @@ defmodule MyApp.Catalog.ManagedItem do
 
     policy action(:destroy) do
       authorize_if authzed_can(:admin_delete)
+    end
+
+    policy action_type(:read) do
+      authorize_if authzed_can(:admin_edit)
     end
   end
 end
