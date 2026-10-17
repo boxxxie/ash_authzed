@@ -5,6 +5,7 @@ defmodule AshAuthzed.AdaptersContractTest do
   alias AshAuthzed.Adapters.Licet, as: LicetAdapter
   alias AshAuthzed.Adapters.Memory
   alias AshAuthzed.Error
+  alias Mix.Tasks.AshAuthzed.Bench.BenchRepo
 
   @schema_zed """
   definition user {}
@@ -289,6 +290,146 @@ defmodule AshAuthzed.AdaptersContractTest do
                ]
 
         assert Adapter.lookup_resources!("managed_item", :admin_delete, "user:bob", opts) == []
+      end
+    end
+
+    test "live Licet (Postgres) and live SpiceDB (HTTP) evaluate capability permissions and self-targeted roles identically" do
+      {:ok, _} = Application.ensure_all_started(:ecto_sql)
+      {:ok, _} = Application.ensure_all_started(:postgrex)
+      {:ok, _} = Application.ensure_all_started(:req)
+
+      {:ok, yaml_map} = YamlElixir.read_from_file("priv/licet/admin_capabilities.yaml")
+      schema_text = Map.fetch!(yaml_map, "schema")
+
+      pg_url = System.get_env("POSTGRES_URL", "ecto://postgres:postgres@localhost/postgres")
+
+      {licet_opts_list, licet_cleanup} =
+        with {:ok, _} <-
+               (case start_supervised({BenchRepo, url: pg_url, pool_size: 5, log: false}) do
+                  {:ok, pid} -> {:ok, pid}
+                  {:error, {:already_started, pid}} -> {:ok, pid}
+                  err -> err
+                end),
+             {:ok, _} <- BenchRepo.query("SELECT 1", []) do
+          prefix = "licet_test_#{System.unique_integer([:positive])}"
+          Licet.Testing.migrate!(BenchRepo, prefix)
+          instance = :"licet_live_test_#{System.unique_integer([:positive])}"
+
+          start_supervised!(
+            {Licet,
+             name: instance, repo: BenchRepo, prefix: prefix, schema: {:string, schema_text}}
+          )
+
+          cleanup = fn ->
+            stop_supervised(Licet)
+            BenchRepo.query!("DROP SCHEMA IF EXISTS #{prefix} CASCADE", [])
+          end
+
+          {[[adapter: :licet, adapter_opts: [instance: instance]]], cleanup}
+        else
+          _ -> {[], fn -> :ok end}
+        end
+
+      # Start ephemeral SpiceDB server if `spicedb` CLI is installed
+      spicedb_opts_list =
+        case System.find_executable("spicedb") do
+          nil ->
+            []
+
+          spicedb_bin ->
+            http_port = Enum.random(29_001..29_900)
+            grpc_port = http_port + 1
+            token = "live_test_secret"
+            url = "http://127.0.0.1:#{http_port}"
+
+            port =
+              Port.open({:spawn_executable, spicedb_bin}, [
+                :binary,
+                :exit_status,
+                :stderr_to_stdout,
+                args: [
+                  "serve",
+                  "--grpc-preshared-key",
+                  token,
+                  "--http-enabled",
+                  "--http-addr",
+                  "127.0.0.1:#{http_port}",
+                  "--grpc-addr",
+                  "127.0.0.1:#{grpc_port}",
+                  "--metrics-enabled=false",
+                  "--telemetry-endpoint=",
+                  "--skip-release-check"
+                ]
+              ])
+
+            {:os_pid, os_pid} = Port.info(port, :os_pid)
+
+            on_exit(fn ->
+              System.cmd("kill", ["-9", to_string(os_pid)], stderr_to_stdout: true)
+            end)
+
+            Enum.reduce_while(1..30, :error, fn _, _ ->
+              case Req.post(
+                     url: "#{url}/v1/schema/write",
+                     headers: [{"authorization", "Bearer #{token}"}],
+                     json: %{schema: schema_text},
+                     retry: false
+                   ) do
+                {:ok, %Req.Response{status: status}} when status in 200..299 ->
+                  {:halt, :ok}
+
+                _ ->
+                  Process.sleep(100)
+                  {:cont, :error}
+              end
+            end)
+
+            [
+              [
+                adapter: :spicedb_http,
+                adapter_opts: [url: url, token: token, consistency: :fully_consistent]
+              ]
+            ]
+        end
+
+      tuples = [
+        {:create, "catalog:main#admin@user:alice"},
+        {:create, "catalog:main#can_edit@user:bob"},
+        {:create, "managed_item:spec_1#catalog@catalog:main"},
+        {:create, "managed_item:spec_2#catalog@catalog:main"},
+        {:create, "managed_item:spec_2#can_delete@user:charlie"}
+      ]
+
+      try do
+        for opts <- licet_opts_list ++ spicedb_opts_list do
+          assert {:ok, _token} = Adapter.write_tuples(tuples, opts)
+
+          # 1. Global catalog admin (alice)
+          assert Adapter.check?("catalog:main", :admin_create, "user:alice", opts)
+          assert Adapter.check?("managed_item:spec_1", :admin_edit, "user:alice", opts)
+          assert Adapter.check?("managed_item:spec_1", :admin_delete, "user:alice", opts)
+
+          assert Enum.sort(
+                   Adapter.lookup_resources!("managed_item", :admin_edit, "user:alice", opts)
+                 ) ==
+                   ["spec_1", "spec_2"]
+
+          # 2. Global catalog editor (bob)
+          refute Adapter.check?("catalog:main", :admin_create, "user:bob", opts)
+          assert Adapter.check?("managed_item:spec_1", :admin_edit, "user:bob", opts)
+          refute Adapter.check?("managed_item:spec_1", :admin_delete, "user:bob", opts)
+
+          # 3. Item-scoped capability (charlie only has can_delete on spec_2)
+          refute Adapter.check?("managed_item:spec_1", :admin_delete, "user:charlie", opts)
+          assert Adapter.check?("managed_item:spec_2", :admin_delete, "user:charlie", opts)
+
+          assert Adapter.lookup_resources!("managed_item", :admin_delete, "user:charlie", opts) ==
+                   [
+                     "spec_2"
+                   ]
+        end
+      after
+        licet_cleanup.()
       end
     end
   end

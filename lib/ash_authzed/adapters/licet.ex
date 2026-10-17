@@ -6,7 +6,7 @@ defmodule AshAuthzed.Adapters.Licet do
   ## Options
 
   * `:instance` (required) - The atom name of the supervised `Licet` instance (e.g., `MyApp.Licet`).
-  * `:consistency` - Snapshot consistency passed to `Licet.check/5` and `Licet.lookup_resources/5`. Defaults to `:minimize_latency`.
+  * `:consistency` - Snapshot consistency passed to `Licet.check/5` and `Licet.lookup_resources/5`. Defaults to `:full` so permission checks immediately observe committed writes without quantization lag (pass `:minimize_latency` to opt into quantized caching).
   * `:write_mode` - Whether `:create` operations should use `:touch` (idempotent) or `:create` (strict). Defaults to `:touch`.
   """
 
@@ -17,7 +17,10 @@ defmodule AshAuthzed.Adapters.Licet do
   @impl true
   def check(resource, permission, subject, opts) do
     with {:ok, instance} <- fetch_instance(opts) do
-      licet_opts = Keyword.take(opts, [:consistency])
+      licet_opts =
+        opts
+        |> Keyword.take([:consistency])
+        |> Keyword.put_new(:consistency, :full)
 
       case Licet.check(instance, resource, permission, subject, licet_opts) do
         {:ok, :allowed} -> {:ok, true}
@@ -30,7 +33,11 @@ defmodule AshAuthzed.Adapters.Licet do
   @impl true
   def lookup_resources(resource_type, permission, subject, opts) do
     with {:ok, instance} <- fetch_instance(opts) do
-      licet_opts = Keyword.take(opts, [:consistency, :limit])
+      licet_opts =
+        opts
+        |> Keyword.take([:consistency, :limit])
+        |> Keyword.put_new(:consistency, :full)
+
       collect_all_pages(instance, resource_type, permission, subject, licet_opts, nil, [])
     end
   end

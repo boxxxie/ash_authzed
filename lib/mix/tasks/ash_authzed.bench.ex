@@ -23,10 +23,18 @@ defmodule Mix.Tasks.AshAuthzed.Bench do
   @switches [
     count: :integer,
     compare_spicedb: :boolean,
+    all: :boolean,
     batch_size: :integer,
     resource: :string,
     adapter: :string
   ]
+
+  defmodule BenchRepo do
+    @moduledoc false
+    use Ecto.Repo,
+      otp_app: :ash_authzed,
+      adapter: Ecto.Adapters.Postgres
+  end
 
   @impl true
   def run(args) do
@@ -38,14 +46,16 @@ defmodule Mix.Tasks.AshAuthzed.Bench do
     count = Keyword.get(opts, :count, 200)
     batch_size = Keyword.get(opts, :batch_size, 100)
     compare_spicedb? = Keyword.get(opts, :compare_spicedb, false)
+    all? = Keyword.get(opts, :all, false)
     resource = resolve_resource(opts[:resource])
-    adapters = resolve_adapters(opts[:adapter], compare_spicedb?, resource)
+    adapters = resolve_adapters(opts[:adapter], compare_spicedb?, all?, resource)
 
     Mix.shell().info(
       "\n=== AshAuthzed Benchmark (resource: #{inspect(resource)}, count: #{count}, batch_size: #{batch_size}) ===\n"
     )
 
     prev_adapter = Application.get_env(:ash_authzed, :adapter)
+    prev_adapter_opts = Application.get_env(:ash_authzed, :adapter_opts)
 
     try do
       results =
@@ -56,13 +66,13 @@ defmodule Mix.Tasks.AshAuthzed.Bench do
 
       print_summary_table(results)
     after
-      if prev_adapter do
-        Application.put_env(:ash_authzed, :adapter, prev_adapter)
-      else
-        Application.delete_env(:ash_authzed, :adapter)
-      end
+      restore_env(:adapter, prev_adapter)
+      restore_env(:adapter_opts, prev_adapter_opts)
     end
   end
+
+  defp restore_env(key, nil), do: Application.delete_env(:ash_authzed, key)
+  defp restore_env(key, val), do: Application.put_env(:ash_authzed, key, val)
 
   defp resolve_resource(nil) do
     cond do
@@ -84,16 +94,27 @@ defmodule Mix.Tasks.AshAuthzed.Bench do
     Module.concat([res_str])
   end
 
-  defp resolve_adapters(adapter_str, _compare_spicedb?, _resource) when is_binary(adapter_str) do
-    [parse_adapter(adapter_str)]
+  defp resolve_adapters("all", _compare_spicedb?, _all?, _resource) do
+    [Memory, LicetAdapter, SpiceDBHttp, :spicedb_postgres]
   end
 
-  defp resolve_adapters(nil, true, resource) do
+  defp resolve_adapters(adapter_str, _compare_spicedb?, _all?, _resource)
+       when is_binary(adapter_str) do
+    adapter_str
+    |> String.split(",", trim: true)
+    |> Enum.map(&parse_adapter/1)
+  end
+
+  defp resolve_adapters(nil, _compare_spicedb?, true, _resource) do
+    [Memory, LicetAdapter, SpiceDBHttp, :spicedb_postgres]
+  end
+
+  defp resolve_adapters(nil, true, false, resource) do
     base = default_adapter_for(resource)
     Enum.uniq([base, SpiceDBHttp])
   end
 
-  defp resolve_adapters(nil, false, resource) do
+  defp resolve_adapters(nil, false, false, resource) do
     [Application.get_env(:ash_authzed, :adapter, default_adapter_for(resource))]
   end
 
@@ -109,12 +130,15 @@ defmodule Mix.Tasks.AshAuthzed.Bench do
   defp parse_adapter("memory"), do: Memory
   defp parse_adapter("licet"), do: LicetAdapter
   defp parse_adapter("spicedb_http"), do: SpiceDBHttp
+  defp parse_adapter("spicedb"), do: SpiceDBHttp
+  defp parse_adapter("spicedb_postgres"), do: :spicedb_postgres
   defp parse_adapter(mod_str), do: Module.concat([mod_str])
 
-  defp run_suite_for_adapter(resource, adapter, count, batch_size) do
-    maybe_start_memory_store(resource, adapter)
+  defp run_suite_for_adapter(resource, target, count, batch_size) do
+    {adapter_mod, adapter_label, cleanup_fn} = setup_adapter_backend(resource, target)
+    Application.put_env(:ash_authzed, :adapter, adapter_mod)
     run_id = System.unique_integer([:positive])
-    Mix.shell().info("Running suite for #{inspect(adapter)}...")
+    Mix.shell().info("Running suite for #{adapter_label}...")
 
     try do
       # 1. Measure Single Create (with commit + tuple write)
@@ -190,7 +214,7 @@ defmodule Mix.Tasks.AshAuthzed.Bench do
         end)
 
       %{
-        adapter: inspect(adapter),
+        adapter: adapter_label,
         single_create_ms: Float.round(single_create_us / 1_000, 2),
         bulk_create_total_ms: Float.round(bulk_create_us / 1_000, 2),
         bulk_create_per_row_ms: Float.round(bulk_create_us / 1_000 / count, 3),
@@ -219,11 +243,12 @@ defmodule Mix.Tasks.AshAuthzed.Bench do
             strategy: [:stream, :atomic_batches]
           )
       end
+
+      cleanup_fn.()
     end
   end
 
-  defp maybe_start_memory_store(resource, adapter)
-       when adapter in [:memory, Memory] do
+  defp setup_adapter_backend(resource, adapter) when adapter in [:memory, Memory] do
     adapter_opts = AshAuthzed.get_opt(resource, :adapter_opts, [])
     store = Keyword.get(adapter_opts, :store, Memory)
 
@@ -231,9 +256,225 @@ defmodule Mix.Tasks.AshAuthzed.Bench do
       {:ok, parsed} = Licet.Validate.parse(File.read!("priv/licet/user_permissions.yaml"))
       {:ok, _pid} = Memory.start_link(name: store, schema: parsed.schema)
     end
+
+    Application.put_env(:ash_authzed, :adapter_opts, store: store)
+    {Memory, "AshAuthzed.Adapters.Memory", fn -> :ok end}
   end
 
-  defp maybe_start_memory_store(_resource, _adapter), do: :ok
+  defp setup_adapter_backend(resource, adapter) when adapter in [:licet, LicetAdapter] do
+    adapter_opts = AshAuthzed.get_opt(resource, :adapter_opts, [])
+
+    cleanup =
+      if Keyword.has_key?(adapter_opts, :instance) and
+           not is_nil(Process.whereis(adapter_opts[:instance])) do
+        fn -> :ok end
+      else
+        start_ephemeral_licet!()
+      end
+
+    {LicetAdapter, "AshAuthzed.Adapters.Licet (PG)", cleanup}
+  end
+
+  defp setup_adapter_backend(resource, adapter) when adapter in [:spicedb_http, SpiceDBHttp] do
+    adapter_opts = AshAuthzed.get_opt(resource, :adapter_opts, [])
+    url = Keyword.get(adapter_opts, :url, System.get_env("SPICEDB_URL", "http://127.0.0.1:18443"))
+    token = Keyword.get(adapter_opts, :token, System.get_env("SPICEDB_TOKEN", "bench_secret"))
+
+    {:ok, _} = Application.ensure_all_started(:req)
+    {:ok, yaml_map} = YamlElixir.read_from_file("priv/licet/user_permissions.yaml")
+    schema_text = Map.fetch!(yaml_map, "schema")
+
+    {started_os_pid, active_url} =
+      case push_spicedb_schema(url, token, schema_text) do
+        :ok ->
+          {nil, url}
+
+        {:error, _} ->
+          start_ephemeral_spicedb!(token, schema_text, [])
+      end
+
+    Application.put_env(:ash_authzed, :adapter_opts,
+      url: active_url,
+      token: token,
+      consistency: :fully_consistent
+    )
+
+    cleanup = fn ->
+      if started_os_pid do
+        System.cmd("kill", ["-9", to_string(started_os_pid)], stderr_to_stdout: true)
+      end
+    end
+
+    {SpiceDBHttp, "AshAuthzed.Adapters.SpiceDBHttp (Mem)", cleanup}
+  end
+
+  defp setup_adapter_backend(_resource, :spicedb_postgres) do
+    {:ok, _} = Application.ensure_all_started(:ecto_sql)
+    {:ok, _} = Application.ensure_all_started(:postgrex)
+    {:ok, _} = Application.ensure_all_started(:req)
+
+    pg_url = System.get_env("POSTGRES_URL", "ecto://postgres:postgres@localhost/postgres")
+    repo_pid = ensure_bench_repo_started!(pg_url)
+    db_name = "spicedb_bench_#{System.unique_integer([:positive])}"
+    BenchRepo.query!("CREATE DATABASE #{db_name}", [])
+
+    conn_uri =
+      pg_url
+      |> String.replace_prefix("ecto://", "postgres://")
+      |> String.replace(~r"/[^/]+$", "/#{db_name}?sslmode=disable")
+
+    spicedb_bin = find_spicedb_executable!()
+
+    {_, 0} =
+      System.cmd(
+        spicedb_bin,
+        [
+          "datastore",
+          "migrate",
+          "head",
+          "--datastore-engine=postgres",
+          "--datastore-conn-uri=#{conn_uri}",
+          "--skip-release-check"
+        ],
+        stderr_to_stdout: true
+      )
+
+    {:ok, yaml_map} = YamlElixir.read_from_file("priv/licet/user_permissions.yaml")
+    schema_text = Map.fetch!(yaml_map, "schema")
+    token = "bench_pg_secret"
+
+    {os_pid, active_url} =
+      start_ephemeral_spicedb!(token, schema_text, [
+        "--datastore-engine=postgres",
+        "--datastore-conn-uri=#{conn_uri}"
+      ])
+
+    Application.put_env(:ash_authzed, :adapter_opts,
+      url: active_url,
+      token: token,
+      consistency: :fully_consistent
+    )
+
+    cleanup = fn ->
+      System.cmd("kill", ["-9", to_string(os_pid)], stderr_to_stdout: true)
+      Process.sleep(100)
+      BenchRepo.query!("DROP DATABASE IF EXISTS #{db_name} WITH (FORCE)", [])
+      stop_if_alive(repo_pid)
+    end
+
+    {SpiceDBHttp, "AshAuthzed.Adapters.SpiceDBHttp (PG)", cleanup}
+  end
+
+  defp setup_adapter_backend(_resource, adapter) do
+    {adapter, inspect(adapter), fn -> :ok end}
+  end
+
+  defp start_ephemeral_licet! do
+    {:ok, _} = Application.ensure_all_started(:ecto_sql)
+    {:ok, _} = Application.ensure_all_started(:postgrex)
+
+    pg_url = System.get_env("POSTGRES_URL", "ecto://postgres:postgres@localhost/postgres")
+    repo_pid = ensure_bench_repo_started!(pg_url)
+
+    prefix = "licet_bench_#{System.unique_integer([:positive])}"
+    Licet.Testing.migrate!(BenchRepo, prefix)
+
+    {:ok, parsed} = Licet.Validate.parse(File.read!("priv/licet/user_permissions.yaml"))
+    instance = :"licet_bench_inst_#{System.unique_integer([:positive])}"
+
+    {:ok, licet_pid} =
+      Licet.start_link(
+        name: instance,
+        repo: BenchRepo,
+        prefix: prefix,
+        schema: {:string, parsed.schema.source}
+      )
+
+    Application.put_env(:ash_authzed, :adapter_opts, instance: instance)
+
+    fn ->
+      stop_if_alive(licet_pid)
+      BenchRepo.query!("DROP SCHEMA IF EXISTS #{prefix} CASCADE", [])
+      stop_if_alive(repo_pid)
+    end
+  end
+
+  defp ensure_bench_repo_started!(pg_url) do
+    case BenchRepo.start_link(url: pg_url, pool_size: 10, log: false) do
+      {:ok, pid} -> pid
+      {:error, {:already_started, pid}} -> pid
+    end
+  end
+
+  defp stop_if_alive(pid) do
+    if Process.alive?(pid), do: GenServer.stop(pid, :normal)
+  end
+
+  defp push_spicedb_schema(url, token, schema_text) do
+    case Req.post(
+           url: String.trim_trailing(url, "/") <> "/v1/schema/write",
+           headers: [{"authorization", "Bearer #{token}"}],
+           json: %{schema: schema_text},
+           retry: false
+         ) do
+      {:ok, %Req.Response{status: status}} when status in 200..299 -> :ok
+      other -> {:error, other}
+    end
+  end
+
+  defp find_spicedb_executable! do
+    System.find_executable("spicedb") ||
+      Mix.raise("Could not connect to SpiceDB and `spicedb` executable was not found in PATH.")
+  end
+
+  defp start_ephemeral_spicedb!(token, schema_text, extra_args) do
+    spicedb_bin = find_spicedb_executable!()
+
+    http_port = Enum.random(28_000..29_000)
+    grpc_port = http_port + 1
+    url = "http://127.0.0.1:#{http_port}"
+
+    base_args = [
+      "serve",
+      "--grpc-preshared-key",
+      token,
+      "--http-enabled",
+      "--http-addr",
+      "127.0.0.1:#{http_port}",
+      "--grpc-addr",
+      "127.0.0.1:#{grpc_port}",
+      "--metrics-enabled=false",
+      "--telemetry-endpoint=",
+      "--skip-release-check"
+    ]
+
+    port =
+      Port.open({:spawn_executable, spicedb_bin}, [
+        :binary,
+        :exit_status,
+        :stderr_to_stdout,
+        args: base_args ++ extra_args
+      ])
+
+    {:os_pid, os_pid} = Port.info(port, :os_pid)
+    wait_for_spicedb!(url, token, schema_text, 40)
+    {os_pid, url}
+  end
+
+  defp wait_for_spicedb!(_url, _token, _schema_text, 0) do
+    Mix.raise("Timed out waiting for local `spicedb serve` HTTP server to start.")
+  end
+
+  defp wait_for_spicedb!(url, token, schema_text, attempts) do
+    case push_spicedb_schema(url, token, schema_text) do
+      :ok ->
+        :ok
+
+      {:error, _} ->
+        Process.sleep(100)
+        wait_for_spicedb!(url, token, schema_text, attempts - 1)
+    end
+  end
 
   defp default_member_role(resource) do
     case Info.attribute(resource, :role) do
@@ -290,9 +531,9 @@ defmodule Mix.Tasks.AshAuthzed.Bench do
     Mix.shell().info("\n--- Benchmark Results ---")
 
     header =
-      String.pad_trailing("Adapter", 32) <>
+      String.pad_trailing("Adapter", 39) <>
         String.pad_trailing("1x Create", 12) <>
-        String.pad_trailing("Bulk Create (per row)", 24) <>
+        String.pad_trailing("Bulk Create (per row)", 28) <>
         String.pad_trailing("1x Ash.can?", 14) <>
         String.pad_trailing("Read List", 12) <>
         "Atomic Bulk Update (50)"
@@ -302,11 +543,11 @@ defmodule Mix.Tasks.AshAuthzed.Bench do
 
     for r <- results do
       row =
-        String.pad_trailing(r.adapter, 32) <>
+        String.pad_trailing(r.adapter, 39) <>
           String.pad_trailing("#{r.single_create_ms} ms", 12) <>
           String.pad_trailing(
             "#{r.bulk_create_total_ms} ms (#{r.bulk_create_per_row_ms} ms/row)",
-            24
+            28
           ) <>
           String.pad_trailing("#{r.single_check_ms} ms", 14) <>
           String.pad_trailing("#{r.collection_read_ms} ms", 12) <>

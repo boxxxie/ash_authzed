@@ -7,6 +7,9 @@ schema: |
     relation admin: user
     relation member: user
 
+    permission is_super_admin = super_admin
+    permission is_admin       = admin
+
     // Who can create or promote users to specific roles?
     permission assign_user        = super_admin + admin
     permission assign_admin       = super_admin
@@ -21,24 +24,24 @@ schema: |
     relation is_protected_admin: user:*
 
     // 1. View: Owner, any Admin, or any Super Admin
-    permission view = owner + platform->admin + platform->super_admin
+    permission view = owner + platform->is_admin + platform->is_super_admin
 
     // 2. Edit:
     //    - You can always edit your own profile (`owner`)
-    //    - Super Admins can edit anyone (`platform->super_admin`)
-    //    - Admins can edit anyone EXCEPT protected admins (`platform->admin - is_protected_admin`)
-    permission edit = owner + platform->super_admin + (platform->admin - is_protected_admin)
+    //    - Super Admins can edit anyone (`platform->is_super_admin`)
+    //    - Admins can edit anyone EXCEPT protected admins (`platform->is_admin - is_protected_admin`)
+    permission edit = owner + platform->is_super_admin + (platform->is_admin - is_protected_admin)
 
     // 3. Delete:
-    //    - Super Admins can delete anyone EXCEPT themselves (`platform->super_admin - owner`)
+    //    - Super Admins can delete anyone EXCEPT themselves (`platform->is_super_admin - owner`)
     //    - Admins can delete regular users, never other admins or themselves
-    permission delete = (platform->super_admin - owner) + (platform->admin - is_protected_admin - owner)
+    permission delete = (platform->is_super_admin - owner) + (platform->is_admin - is_protected_admin - owner)
 
     // 4. Change Role (Target check):
     //    - Never change your own role (`- owner`)
     //    - Super Admins can change anyone else's role
     //    - Admins can only change non-admin users' roles
-    permission change_role = (platform->super_admin - owner) + (platform->admin - is_protected_admin - owner)
+    permission change_role = (platform->is_super_admin - owner) + (platform->is_admin - is_protected_admin - owner)
   }
 
 relationships: |
