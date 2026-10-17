@@ -11,12 +11,13 @@ defmodule AshAuthzed.MixProject do
       elixir: "~> 1.16",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
+      consolidate_protocols: Mix.env() != :test,
       aliases: aliases(),
       deps: deps(),
       package: package(),
       docs: docs(),
       description:
-        "Declarative Zanzibar / ReBAC authorization extension for Ash Framework backed by Licet (embedded Postgres) or SpiceDB / Authzed."
+        "Zanzibar-style Relationship-Based Access Control (ReBAC) extension for Ash Framework with SpiceDB and Licet adapters."
     ]
   end
 
@@ -53,6 +54,12 @@ defmodule AshAuthzed.MixProject do
 
   defp aliases do
     [
+      "spark.formatter": "spark.formatter --extensions AshAuthzed",
+      "spark.cheat_sheets": "spark.cheat_sheets --extensions AshAuthzed",
+      docs: [
+        "spark.cheat_sheets",
+        "docs"
+      ],
       precommit: [
         "compile --warnings-as-errors",
         "deps.unlock --unused",
@@ -68,7 +75,16 @@ defmodule AshAuthzed.MixProject do
       links: %{
         "GitHub" => @source_url
       },
-      files: ~w(lib priv .formatter.exs mix.exs README.md LICENSE)
+      files: ~w(
+        lib
+        priv
+        documentation
+        usage-rules.md
+        .formatter.exs
+        mix.exs
+        README.md
+        LICENSE
+      )
     ]
   end
 
@@ -77,7 +93,47 @@ defmodule AshAuthzed.MixProject do
       main: "readme",
       source_url: @source_url,
       source_ref: "v#{@version}",
-      extras: ["README.md"]
+      extras: [
+        "README.md": [title: "Overview"],
+        "documentation/tutorials/getting-started-with-ash-authzed.md": [
+          title: "Getting Started"
+        ],
+        "documentation/dsls/DSL-AshAuthzed.md": [
+          title: "DSL: AshAuthzed"
+        ],
+        "usage-rules.md": [title: "LLM & Agent Usage Rules"]
+      ],
+      groups_for_extras: [
+        Tutorials: ~r"documentation/tutorials/",
+        "DSL Reference": ~r"documentation/dsls/",
+        Reference: ["usage-rules.md"]
+      ],
+      groups_for_modules: [
+        Extension: [
+          AshAuthzed,
+          AshRebac,
+          AshAuthzed.PolicyMacros,
+          AshAuthzed.Checks.Can,
+          AshAuthzed.Checks.CanAssign,
+          AshAuthzed.SyncChange,
+          AshAuthzed.Relation,
+          AshAuthzed.ExternalRole,
+          AshAuthzed.ConditionalWildcard
+        ],
+        Adapters: [
+          AshAuthzed.Adapter,
+          AshAuthzed.Adapters.Licet,
+          AshAuthzed.Adapters.SpiceDBHttp,
+          AshAuthzed.Adapters.Memory
+        ],
+        "Transformers & Verifiers": [
+          AshAuthzed.Transformer,
+          AshAuthzed.Verifiers.VerifyZedSchema
+        ],
+        Errors: [
+          AshAuthzed.Error
+        ]
+      ]
     ]
   end
 end
