@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Capability-based access control (`admin` with granular `admin_create`, `admin_edit`, `admin_delete` capabilities) schema fixture (`priv/licet/admin_capabilities.yaml`), test suite (`AshAuthzed.CapabilityPermissionsTest`), and dual RBAC + capability modeling guides in `README.md`, `Getting Started`, and `usage-rules.md`.
+- Unit and contract test suites covering `AshAuthzed.Adapters.SpiceDBHttp` (`Req.Test`), cross-adapter contracts (`AshAuthzed.AdaptersContractTest`), `Mix.Tasks.AshAuthzed.Backfill`, and `Mix.Tasks.AshAuthzed.Install` (`Igniter.Test`).
+
 ## [0.1.0] - 2026-10-17
 
 ### Added
@@ -19,3 +26,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `AshAuthzed.Adapters.Memory` (caller-supervised in-memory store for `async: true` tests)
 - Mix tasks: `mix ash_authzed.install` (Igniter installer), `mix ash_authzed.backfill` (keyset-paginated tuple reconciliation), and `mix ash_authzed.bench` (adapter throughput benchmark suite).
 - Comprehensive ExDoc guides (`Getting Started`, `DSL: AshAuthzed`) and `usage-rules.md` for LLM/agent integration.
+
