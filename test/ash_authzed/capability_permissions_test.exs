@@ -1,21 +1,27 @@
 defmodule AshAuthzed.CapabilityPermissionsTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   import Spark.Test
 
   alias AshAuthzed.Adapters.Memory
+  alias AshAuthzed.Checks.Can
   alias AshAuthzed.Test.AdminCapabilities
   alias AshAuthzed.Test.AdminCapabilities.Item
 
   @validation_yaml "priv/licet/admin_capabilities.yaml"
 
-  setup do
+  setup_all do
     {:ok, parsed} = Licet.Validate.parse(File.read!(@validation_yaml))
 
     start_supervised!(
       {Memory, name: AshAuthzed.Test.CapabilityMemoryStore, schema: parsed.schema}
     )
 
+    :ok
+  end
+
+  setup do
+    uid = System.unique_integer([:positive])
     admin_actor = %{id: Ash.UUID.generate(), type: "user"}
     editor_actor = %{id: Ash.UUID.generate(), type: "user"}
     outsider_actor = %{id: Ash.UUID.generate(), type: "user"}
@@ -24,13 +30,14 @@ defmodule AshAuthzed.CapabilityPermissionsTest do
     item =
       Item
       |> Ash.Changeset.for_create(:create, %{
-        title: "Initial Spec",
+        title: "Initial Spec #{uid}",
         admin_id: admin_actor.id,
         capability: :admin
       })
       |> Ash.create!(authorize?: false)
 
     %{
+      uid: uid,
       admin_actor: admin_actor,
       editor_actor: editor_actor,
       outsider_actor: outsider_actor,
@@ -45,10 +52,21 @@ defmodule AshAuthzed.CapabilityPermissionsTest do
   end
 
   describe "admin with admin_create, admin_edit, and admin_delete capabilities" do
-    test "full admin is authorized for admin_edit and admin_delete", %{
+    test "full admin is authorized for create, read, update, and destroy", %{
       admin_actor: admin,
       item: item
     } do
+      assert {:ok, created} =
+               Item
+               |> Ash.Changeset.for_create(:create, %{
+                 title: "Created by Admin",
+                 admin_id: admin.id,
+                 capability: :admin
+               })
+               |> Ash.create(actor: admin)
+
+      assert created.title == "Created by Admin"
+
       assert {:ok, updated} =
                AdminCapabilities.update_item(item, %{title: "Updated by Admin"}, actor: admin)
 
@@ -56,9 +74,10 @@ defmodule AshAuthzed.CapabilityPermissionsTest do
       assert :ok = AdminCapabilities.destroy_item(updated, actor: admin)
     end
 
-    test "actor granted only admin_edit capability can update and read, but cannot delete", %{
-      editor_actor: editor
-    } do
+    test "actor granted only admin_edit capability can update and read, but cannot create or delete",
+         %{
+           editor_actor: editor
+         } do
       # Seed an item where `editor` only has `:can_edit` capability
       editable_item =
         Item
@@ -78,16 +97,27 @@ defmodule AshAuthzed.CapabilityPermissionsTest do
 
       assert updated.title == "Edited"
 
-      # Denied: `can_edit` does NOT satisfy `admin_delete`
+      # Denied: `can_edit` does NOT satisfy `admin_create` or `admin_delete`
+      assert_raise Ash.Error.Forbidden, fn ->
+        Item
+        |> Ash.Changeset.for_create(:create, %{
+          title: "Unauthorized Create",
+          admin_id: editor.id,
+          capability: :can_edit
+        })
+        |> Ash.create!(actor: editor)
+      end
+
       assert_raise Ash.Error.Forbidden, fn ->
         AdminCapabilities.destroy_item!(updated, actor: editor)
       end
     end
 
-    test "unauthorized actor without capabilities is denied both edit and delete", %{
+    test "unauthorized actor without capabilities is denied read, update, and delete", %{
       outsider_actor: outsider,
       item: item
     } do
+      # Row-level security: read returns [] for unauthorized actor
       assert {:ok, []} = AdminCapabilities.list_items(actor: outsider)
 
       assert_raise Ash.Error.Forbidden, fn ->
@@ -96,6 +126,65 @@ defmodule AshAuthzed.CapabilityPermissionsTest do
 
       assert_raise Ash.Error.Forbidden, fn ->
         AdminCapabilities.destroy_item!(item, actor: outsider)
+      end
+    end
+
+    test "direct per-item capability grant (managed_item:<id>#can_edit@user:<id>) authorizes only that item",
+         %{item: other_item} do
+      scoped_actor = %{id: Ash.UUID.generate(), type: "user"}
+
+      target_item =
+        Item
+        |> Ash.Changeset.for_create(:create, %{
+          title: "Per-Item Scoped",
+          admin_id: Ash.UUID.generate(),
+          capability: :admin
+        })
+        |> Ash.create!(authorize?: false)
+
+      # Grant direct per-item `can_edit` tuple on target_item only
+      {:ok, :synced} =
+        Memory.write_tuples(
+          [{:create, "managed_item:#{target_item.id}#can_edit@user:#{scoped_actor.id}"}],
+          store: AshAuthzed.Test.CapabilityMemoryStore
+        )
+
+      assert {:ok, visible} = AdminCapabilities.list_items(actor: scoped_actor)
+      visible_ids = Enum.map(visible, & &1.id)
+      assert target_item.id in visible_ids
+      refute other_item.id in visible_ids
+
+      assert {:ok, _} =
+               AdminCapabilities.update_item(target_item, %{title: "Scoped Edit"},
+                 actor: scoped_actor
+               )
+
+      assert_raise Ash.Error.Forbidden, fn ->
+        AdminCapabilities.update_item!(other_item, %{title: "Forbidden Edit"},
+          actor: scoped_actor
+        )
+      end
+
+      assert_raise Ash.Error.Forbidden, fn ->
+        AdminCapabilities.destroy_item!(target_item, actor: scoped_actor)
+      end
+    end
+
+    test "nil or malformed actors fail closed without raising KeyError or BadMapError", %{
+      item: item
+    } do
+      assert Can.filter(nil, %{resource: Item}, permission: :admin_edit) == false
+      assert Can.filter(%{}, %{resource: Item}, permission: :admin_edit) == false
+      assert Can.filter(%{id: nil}, %{resource: Item}, permission: :admin_edit) == false
+      assert Can.filter(:invalid_actor, %{resource: Item}, permission: :admin_edit) == false
+
+      assert {:error, %Ash.Error.Forbidden{}} = AdminCapabilities.list_items(actor: nil)
+
+      assert {:error, %Ash.Error.Forbidden{}} =
+               AdminCapabilities.list_items(actor: %{role: :unknown})
+
+      assert_raise Ash.Error.Forbidden, fn ->
+        AdminCapabilities.update_item!(item, %{title: "Nil Actor"}, actor: nil)
       end
     end
   end

@@ -212,4 +212,84 @@ defmodule AshAuthzed.AdaptersContractTest do
       assert {:error, _reason} = Licet.Validate.parse("::: invalid: yaml: [unclosed")
     end
   end
+
+  describe "capability role contract parity across Memory, SpiceDBHttp, and Licet" do
+    test "Memory and SpiceDBHttp evaluate capability permissions (admin_create, admin_edit, admin_delete) identically" do
+      {:ok, parsed} = Licet.Validate.parse(File.read!("priv/licet/admin_capabilities.yaml"))
+      store = :"cap_contract_#{System.unique_integer([:positive])}"
+      start_supervised!({Memory, name: store, schema: parsed.schema})
+
+      tuples = [
+        {:create, "catalog:main#admin@user:alice"},
+        {:create, "catalog:main#can_edit@user:bob"},
+        {:create, "managed_item:spec_1#catalog@catalog:main"}
+      ]
+
+      mem_opts = [adapter: :memory, adapter_opts: [store: store]]
+      assert {:ok, :synced} = Adapter.write_tuples(tuples, mem_opts)
+
+      # Bridge SpiceDBHttp plug directly to our Memory store to verify wire-protocol + contract parity
+      spicedb_plug = fn conn ->
+        {:ok, raw_body, conn} = Plug.Conn.read_body(conn)
+        body = Jason.decode!(raw_body)
+
+        case conn.request_path do
+          "/v1/permissions/check" ->
+            res = "#{body["resource"]["objectType"]}:#{body["resource"]["objectId"]}"
+            perm = body["permission"]
+
+            sub =
+              "#{body["subject"]["object"]["objectType"]}:#{body["subject"]["object"]["objectId"]}"
+
+            {:ok, allowed?} = Memory.check(res, perm, sub, store: store)
+
+            permissionship =
+              if allowed?,
+                do: "PERMISSIONSHIP_HAS_PERMISSION",
+                else: "PERMISSIONSHIP_NO_PERMISSION"
+
+            Req.Test.json(conn, %{"permissionship" => permissionship})
+
+          "/v1/permissions/resources" ->
+            res_type = body["resourceObjectType"]
+            perm = body["permission"]
+
+            sub =
+              "#{body["subject"]["object"]["objectType"]}:#{body["subject"]["object"]["objectId"]}"
+
+            {:ok, ids} = Memory.lookup_resources(res_type, perm, sub, store: store)
+
+            results = Enum.map(ids, &%{"result" => %{"resourceObjectId" => &1}})
+            Req.Test.json(conn, %{"results" => results})
+        end
+      end
+
+      http_opts = [
+        adapter: :spicedb_http,
+        adapter_opts: [req_options: [plug: spicedb_plug]]
+      ]
+
+      for opts <- [mem_opts, http_opts] do
+        # Full admin (alice) has all 3 capabilities
+        assert Adapter.check?("catalog:main", :admin_create, "user:alice", opts)
+        assert Adapter.check?("managed_item:spec_1", :admin_edit, "user:alice", opts)
+        assert Adapter.check?("managed_item:spec_1", :admin_delete, "user:alice", opts)
+
+        assert Adapter.lookup_resources!("managed_item", :admin_edit, "user:alice", opts) == [
+                 "spec_1"
+               ]
+
+        # Scoped editor (bob) has admin_edit, but NOT admin_create or admin_delete
+        refute Adapter.check?("catalog:main", :admin_create, "user:bob", opts)
+        assert Adapter.check?("managed_item:spec_1", :admin_edit, "user:bob", opts)
+        refute Adapter.check?("managed_item:spec_1", :admin_delete, "user:bob", opts)
+
+        assert Adapter.lookup_resources!("managed_item", :admin_edit, "user:bob", opts) == [
+                 "spec_1"
+               ]
+
+        assert Adapter.lookup_resources!("managed_item", :admin_delete, "user:bob", opts) == []
+      end
+    end
+  end
 end

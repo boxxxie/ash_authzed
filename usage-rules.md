@@ -90,14 +90,13 @@ policies do
   end
 end
 
-# ✅ DO: Prefer capability-named permissions in `authzed_can/1` (e.g., `authzed_can(:admin_create)`,
+# ✅ DO: Prefer capability-named permissions in `authzed_can/1,2` (e.g., `authzed_can(:admin_create, on: "catalog:main")`,
 # `authzed_can(:admin_edit)`, `authzed_can(:admin_delete)`) over checking role names directly in Ash
-# policies. Modeling capabilities as computed permissions in your `.zed` / `.yaml` schema (such as
-# `permission admin_edit = admin + can_edit`) lets you introduce new roles or delegated capability
-# grants in the schema without touching Elixir policy code:
+# policies. For `:create` actions (where the record ID does not exist yet in the ReBAC store), pass
+# `on: "type:id"` to evaluate the capability on the parent/container object synchronously:
 policies do
   policy action(:create) do
-    authorize_if authzed_can(:admin_create)
+    authorize_if authzed_can(:admin_create, on: "catalog:main")
   end
 
   policy action(:update) do

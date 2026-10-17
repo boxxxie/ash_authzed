@@ -207,6 +207,14 @@ defmodule AshAuthzed.Verifiers.VerifyZedSchema do
 
   defp verify_policy_check(opts, dsl_state, obj_type, zed_def, defs, module) do
     cond do
+      Keyword.has_key?(opts, :permission) and is_binary(opts[:on]) ->
+        [target_type, _] = String.split(opts[:on], ":", parts: 2)
+
+        with {:ok, target_def} <-
+               fetch_target_def(defs, target_type, [:policies, :policy, :authorize_if], module) do
+          verify_permission_check(opts[:permission], target_type, target_def, module)
+        end
+
       Keyword.has_key?(opts, :permission) ->
         verify_permission_check(opts[:permission], obj_type, zed_def, module)
 

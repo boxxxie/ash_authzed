@@ -1,10 +1,11 @@
 defmodule AshAuthzed.Checks.Can do
   @moduledoc """
   `Ash.Policy.FilterCheck` that evaluates whether the actor has a given Zanzibar permission
-  on the target resource(s) via `AshAuthzed.Adapter.lookup_resources/4`.
+  on the target resource(s) via `AshAuthzed.Adapter.lookup_resources/4`, or on a static target
+  object (`on: "catalog:main"`) via `AshAuthzed.Adapter.check?/4`.
 
-  Works seamlessly for both collection reads (`Ash.read!`) and single-record mutations
-  (`Ash.update!`, `Ash.destroy!`, `Ash.can?`).
+  Works seamlessly for collection reads (`Ash.read!`), single-record mutations
+  (`Ash.update!`, `Ash.destroy!`, `Ash.can?`), and `:create` actions when `on: "type:id"` is specified.
   """
 
   use Ash.Policy.FilterCheck
@@ -12,27 +13,36 @@ defmodule AshAuthzed.Checks.Can do
   alias AshAuthzed.Adapter
 
   @impl true
-  def describe(opts), do: "ReBAC permission check: #{opts[:permission]}"
+  def describe(opts) do
+    case opts[:on] do
+      nil -> "ReBAC permission check: #{opts[:permission]}"
+      target -> "ReBAC permission check: #{opts[:permission]} on #{target}"
+    end
+  end
 
   @impl true
-  def filter(actor, %{resource: resource}, opts) when not is_nil(actor) do
+  def filter(%{id: actor_id}, %{resource: resource}, opts) when not is_nil(actor_id) do
     obj_type = AshAuthzed.get_opt(resource, :object_type, nil)
     actor_type = AshAuthzed.get_opt(resource, :actor_type, "user")
     id_attr = AshAuthzed.get_opt(resource, :id_attribute, :id)
-    subject = "#{actor_type}:#{actor.id}"
+    subject = "#{actor_type}:#{actor_id}"
 
     adapter_opts =
       AshAuthzed.adapter_config(
         resource,
-        Keyword.drop(opts, [:permission])
+        Keyword.drop(opts, [:permission, :on])
       )
 
-    case Adapter.lookup_resources(obj_type, opts[:permission], subject, adapter_opts) do
-      {:ok, allowed_ids} ->
-        expr(^ref(id_attr) in ^allowed_ids)
+    if is_binary(opts[:on]) do
+      Adapter.check?(opts[:on], opts[:permission], subject, adapter_opts)
+    else
+      case Adapter.lookup_resources(obj_type, opts[:permission], subject, adapter_opts) do
+        {:ok, allowed_ids} ->
+          expr(^ref(id_attr) in ^allowed_ids)
 
-      {:error, _reason} ->
-        false
+        {:error, _reason} ->
+          false
+      end
     end
   end
 
@@ -55,10 +65,14 @@ defmodule AshAuthzed.Checks.CanAssign do
   end
 
   @impl true
-  def match?(actor, %{changeset: %Ash.Changeset{} = changeset, resource: resource}, opts)
-      when not is_nil(actor) do
+  def match?(
+        %{id: actor_id},
+        %{changeset: %Ash.Changeset{} = changeset, resource: resource},
+        opts
+      )
+      when not is_nil(actor_id) do
     actor_type = AshAuthzed.get_opt(resource, :actor_type, "user")
-    subject = "#{actor_type}:#{actor.id}"
+    subject = "#{actor_type}:#{actor_id}"
     prefix = Keyword.get(opts, :prefix, "assign_")
 
     adapter_opts =

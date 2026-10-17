@@ -99,4 +99,41 @@ defmodule AshAuthzed.Verifiers.VerifyZedSchemaTest do
     assert error.message =~ "Relation `:owenr` does not exist on `definition user_profile`"
     assert error.message =~ "Did you mean `owner`?"
   end
+
+  test "raises DslError when authzed_can/2 with :on references an undefined capability on the target definition" do
+    error =
+      assert_dsl_error do
+        defmodule BrokenTargetCapabilityResource do
+          use Ash.Resource,
+            domain: nil,
+            validate_domain_inclusion?: false,
+            authorizers: [Ash.Policy.Authorizer],
+            extensions: [AshAuthzed]
+
+          authzed do
+            object_type "managed_item"
+            schema_path "priv/licet/admin_capabilities.yaml"
+            relation :catalog, static_subject: "catalog:main"
+          end
+
+          attributes do
+            uuid_primary_key :id
+          end
+
+          actions do
+            defaults [:read, :create]
+          end
+
+          policies do
+            policy action(:create) do
+              # Typo on target `catalog`: `:admin_creat` instead of `:admin_create`
+              authorize_if authzed_can(:admin_creat, on: "catalog:main")
+            end
+          end
+        end
+      end
+
+    assert error.message =~ "unknown permission `:admin_creat` on `definition catalog`"
+    assert error.message =~ "Did you mean `admin_create`?"
+  end
 end

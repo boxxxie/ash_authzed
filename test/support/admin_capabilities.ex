@@ -52,7 +52,7 @@ defmodule AshAuthzed.Test.AdminCapabilities.Item do
 
   policies do
     policy action(:create) do
-      authorize_if authzed_can(:admin_create)
+      authorize_if authzed_can(:admin_create, on: "catalog:main")
     end
 
     policy action(:update) do
