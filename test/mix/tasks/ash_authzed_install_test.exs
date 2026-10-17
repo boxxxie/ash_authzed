@@ -85,4 +85,32 @@ defmodule Mix.Tasks.AshAuthzed.InstallTest do
     + |  end
     """)
   end
+
+  test "is idempotent when ash_authzed.install is run a second time (assert_unchanged/1)" do
+    test_project(files: @default_files)
+    |> Igniter.compose_task("ash_authzed.install", [])
+    |> apply_igniter!()
+    |> Igniter.compose_task("ash_authzed.install", [])
+    |> assert_unchanged()
+  end
+
+  test "supports --adapter spicedb_http and --adapter memory CLI flags" do
+    test_project(files: @default_files)
+    |> Igniter.compose_task("ash_authzed.install", ["--adapter", "spicedb_http"])
+    |> assert_has_patch("config/config.exs", """
+    + |config :ash_authzed,
+    + |  adapter: AshAuthzed.Adapters.SpiceDBHttp,
+    + |  schema_path: "priv/licet/user_permissions.yaml",
+    + |  spicedb_url: "http://localhost:8443"
+    """)
+
+    test_project(files: @default_files)
+    |> Igniter.compose_task("ash_authzed.install", ["--adapter", "memory"])
+    |> refute_creates("lib/test/licet.ex")
+    |> assert_has_patch("config/config.exs", """
+    + |config :ash_authzed,
+    + |  adapter: AshAuthzed.Adapters.Memory,
+    + |  schema_path: "priv/licet/user_permissions.yaml"
+    """)
+  end
 end

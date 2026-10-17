@@ -19,11 +19,13 @@ if Code.ensure_loaded?(Req) do
     def check(resource, permission, subject, opts) do
       with {:ok, res_map} <- parse_object(resource),
            {:ok, sub_map} <- parse_subject(subject) do
-        payload = %{
-          resource: res_map,
-          permission: to_string(permission),
-          subject: sub_map
-        }
+        payload =
+          %{
+            resource: res_map,
+            permission: to_string(permission),
+            subject: sub_map
+          }
+          |> maybe_put_consistency(opts[:consistency])
 
         case post("/v1/permissions/check", payload, opts) do
           {:ok, %{"permissionship" => "PERMISSIONSHIP_HAS_PERMISSION"}} ->
@@ -44,11 +46,13 @@ if Code.ensure_loaded?(Req) do
     @impl true
     def lookup_resources(resource_type, permission, subject, opts) do
       with {:ok, sub_map} <- parse_subject(subject) do
-        payload = %{
-          resourceObjectType: resource_type,
-          permission: to_string(permission),
-          subject: sub_map
-        }
+        payload =
+          %{
+            resourceObjectType: resource_type,
+            permission: to_string(permission),
+            subject: sub_map
+          }
+          |> maybe_put_consistency(opts[:consistency])
 
         case post("/v1/permissions/resources", payload, opts) do
           {:ok, body} ->
@@ -181,6 +185,32 @@ if Code.ensure_loaded?(Req) do
     defp extract_id_from_item(%{"result" => %{"resourceObjectId" => id}}), do: [id]
     defp extract_id_from_item(%{"resourceObjectId" => id}), do: [id]
     defp extract_id_from_item(_), do: []
+
+    defp maybe_put_consistency(payload, nil), do: payload
+
+    defp maybe_put_consistency(payload, :fully_consistent) do
+      Map.put(payload, :consistency, %{fullyConsistent: true})
+    end
+
+    defp maybe_put_consistency(payload, :full) do
+      Map.put(payload, :consistency, %{fullyConsistent: true})
+    end
+
+    defp maybe_put_consistency(payload, :minimize_latency) do
+      Map.put(payload, :consistency, %{minimizeLatency: true})
+    end
+
+    defp maybe_put_consistency(payload, {:at_least_as_fresh, token}) when is_binary(token) do
+      Map.put(payload, :consistency, %{atLeastAsFresh: %{token: token}})
+    end
+
+    defp maybe_put_consistency(payload, {:at_exact_snapshot, token}) when is_binary(token) do
+      Map.put(payload, :consistency, %{atExactSnapshot: %{token: token}})
+    end
+
+    defp maybe_put_consistency(payload, consistency) when is_map(consistency) do
+      Map.put(payload, :consistency, consistency)
+    end
 
     defp post(path, payload, opts) do
       url = Keyword.get(opts, :url, "http://localhost:8443")

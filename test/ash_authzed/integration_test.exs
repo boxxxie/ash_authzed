@@ -259,6 +259,41 @@ defmodule AshAuthzed.IntegrationTest do
     assert {:create, "user_profile:charlie#is_protected_admin@user:*"} in ops
   end
 
+  test "build_operations replaces direct relation tuple when subject_id attribute changes on update" do
+    ops =
+      AshAuthzed.SyncChange.build_operations(
+        User,
+        :update,
+        %{id: "old_owner_id", name: "Charlie", role: :user},
+        %{id: "new_owner_id", name: "Charlie", role: :user}
+      )
+
+    assert {:delete, "user_profile:new_owner_id#owner@user:old_owner_id"} in ops
+    assert {:create, "user_profile:new_owner_id#owner@user:new_owner_id"} in ops
+  end
+
+  test "actor: nil (unauthenticated) strictly denies access without raising FunctionClauseError or generating user:nil tuples",
+       %{charlie: charlie} do
+    # Read with actor: nil raises Ash.Error.Forbidden (Can.filter/3 returns false)
+    assert_raise Ash.Error.Forbidden, fn ->
+      Ash.read!(User, actor: nil)
+    end
+
+    # Update with actor: nil raises Ash.Error.Forbidden
+    assert_raise Ash.Error.Forbidden, fn ->
+      charlie
+      |> Ash.Changeset.for_update(:update_profile, %{name: "Anonymous Edit"})
+      |> Ash.update!(actor: nil)
+    end
+
+    # Create with actor: nil raises Ash.Error.Forbidden (CanAssign.match?/3 returns false)
+    assert_raise Ash.Error.Forbidden, fn ->
+      User
+      |> Ash.Changeset.for_create(:create, %{id: "anon", name: "Anon", role: :user})
+      |> Ash.create!(actor: nil)
+    end
+  end
+
   describe "AshAuthzed.backfill/2 and Mix.Tasks.Rebac.Backfill" do
     test "restores missing tuples and reconciles stale out-of-band role changes", %{
       root: root,

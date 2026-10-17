@@ -134,12 +134,13 @@ if Code.ensure_loaded?(Igniter.Mix.Task) do
 
     defp configure_backend(
            igniter,
-           "spicedb",
+           adapter_opt,
            _otp_app,
            _licet_module,
            _repo_module,
            schema_path
-         ) do
+         )
+         when adapter_opt in ["spicedb", "spicedb_http"] do
       igniter
       |> IgniterConfig.configure(
         "config.exs",
@@ -164,6 +165,29 @@ if Code.ensure_loaded?(Igniter.Mix.Task) do
         :ash_authzed,
         [:consistency],
         :full
+      )
+    end
+
+    defp configure_backend(
+           igniter,
+           "memory",
+           _otp_app,
+           _licet_module,
+           _repo_module,
+           schema_path
+         ) do
+      igniter
+      |> IgniterConfig.configure(
+        "config.exs",
+        :ash_authzed,
+        [:adapter],
+        AshAuthzed.Adapters.Memory
+      )
+      |> IgniterConfig.configure(
+        "config.exs",
+        :ash_authzed,
+        [:schema_path],
+        schema_path
       )
     end
 
@@ -214,19 +238,25 @@ if Code.ensure_loaded?(Igniter.Mix.Task) do
     end
 
     defp create_licet_module(igniter, licet_module, otp_app, repo_module, schema_path) do
-      IgniterModule.create_module(
-        igniter,
-        licet_module,
-        """
-        @moduledoc \"\"\"
-        Embedded Zanzibar / SpiceDB authorization engine powered by Licet and #{inspect(repo_module)}.
-        \"\"\"
-        use Licet,
-          otp_app: #{inspect(otp_app)},
-          repo: #{inspect(repo_module)},
-          schema_file: #{inspect(schema_path)}
-        """
-      )
+      case IgniterModule.module_exists(igniter, licet_module) do
+        {true, igniter} ->
+          igniter
+
+        {false, igniter} ->
+          IgniterModule.create_module(
+            igniter,
+            licet_module,
+            """
+            @moduledoc \"\"\"
+            Embedded Zanzibar / SpiceDB authorization engine powered by Licet and #{inspect(repo_module)}.
+            \"\"\"
+            use Licet,
+              otp_app: #{inspect(otp_app)},
+              repo: #{inspect(repo_module)},
+              schema_file: #{inspect(schema_path)}
+            """
+          )
+      end
     end
 
     defp starter_yaml_template do

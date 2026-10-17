@@ -138,6 +138,27 @@ defmodule AshAuthzed.SyncChange do
          %Relation{name: rel, subject_type: s_type, subject_id: field},
          _resource,
          obj_prefix,
+         :update,
+         {old_record, new_record}
+       )
+       when is_map(old_record) and not is_struct(old_record, OriginalDataNotAvailable) do
+    old_val = Map.get(old_record, field)
+    new_val = Map.get(new_record, field)
+
+    if not is_nil(old_val) and old_val != new_val do
+      [
+        {:delete, "#{obj_prefix}##{rel}@#{s_type}:#{old_val}"},
+        {:create, "#{obj_prefix}##{rel}@#{s_type}:#{new_val}"}
+      ]
+    else
+      [{:create, "#{obj_prefix}##{rel}@#{s_type}:#{new_val}"}]
+    end
+  end
+
+  defp build_entity_ops(
+         %Relation{name: rel, subject_type: s_type, subject_id: field},
+         _resource,
+         obj_prefix,
          action_type,
          {_old_record, new_record}
        ) do

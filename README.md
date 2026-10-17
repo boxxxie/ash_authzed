@@ -334,5 +334,5 @@ Adapter and validation failures return structured `%AshAuthzed.Error{reason: ato
 
 ## License
 
-Released under the [MIT License](https://github.com/boxxxie/ash_authzed/blob/main/LICENSE).
+Released under the [MIT License](https://github.com/boxxxie/ash_authzed/blob/master/LICENSE).
 

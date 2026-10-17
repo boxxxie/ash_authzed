@@ -184,4 +184,75 @@ defmodule AshAuthzed.BatchTelemetryTest do
       assert {:delete, "platform:main#admin@user:#{u2.id}"} in ops
     end
   end
+
+  describe "telemetry span start, stop (error-tagged), and exception events" do
+    defmodule RaisingAdapter do
+      @behaviour AshAuthzed.Adapter
+
+      @impl true
+      def check(_resource, _permission, _subject, _opts) do
+        raise "simulated adapter crash"
+      end
+
+      @impl true
+      def lookup_resources(_resource_type, _permission, _subject, _opts) do
+        {:error, AshAuthzed.Error.new(:simulated_failure, "lookup failed")}
+      end
+
+      @impl true
+      def write_tuples(_operations, _opts) do
+        {:error, AshAuthzed.Error.new(:simulated_write_error, "write failed")}
+      end
+    end
+
+    test "emits :start and :stop with status: :error when adapter returns {:error, _}, and :exception when adapter raises" do
+      test_pid = self()
+      span_handler_id = "ash-authzed-span-telemetry-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach_many(
+        span_handler_id,
+        [
+          [:ash_authzed, :lookup_resources, :start],
+          [:ash_authzed, :lookup_resources, :stop],
+          [:ash_authzed, :check, :start],
+          [:ash_authzed, :check, :exception]
+        ],
+        fn event, measurements, metadata, _config ->
+          send(test_pid, {:span_event, event, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(span_handler_id) end)
+
+      # 1. Error tuple tags `:stop` metadata with `status: :error`
+      assert {:error, %AshAuthzed.Error{reason: :simulated_failure}} =
+               AshAuthzed.Adapter.lookup_resources("user_profile", :view, "user:alice",
+                 adapter: RaisingAdapter
+               )
+
+      assert_receive {:span_event, [:ash_authzed, :lookup_resources, :start], _,
+                      %{adapter: RaisingAdapter, resource_type: "user_profile"}}
+
+      assert_receive {:span_event, [:ash_authzed, :lookup_resources, :stop], %{duration: _},
+                      %{adapter: RaisingAdapter, status: :error}}
+
+      # 2. Raising inside adapter emits `[:ash_authzed, :check, :exception]`
+      assert_raise RuntimeError, "simulated adapter crash", fn ->
+        AshAuthzed.Adapter.check("user_profile:alice", :view, "user:alice",
+          adapter: RaisingAdapter
+        )
+      end
+
+      assert_receive {:span_event, [:ash_authzed, :check, :start], _,
+                      %{adapter: RaisingAdapter, resource: "user_profile:alice"}}
+
+      assert_receive {:span_event, [:ash_authzed, :check, :exception], %{duration: _},
+                      %{
+                        adapter: RaisingAdapter,
+                        kind: :error,
+                        reason: %RuntimeError{message: "simulated adapter crash"}
+                      }}
+    end
+  end
 end

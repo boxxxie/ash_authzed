@@ -1,0 +1,215 @@
+defmodule AshAuthzed.AdaptersContractTest do
+  use ExUnit.Case, async: true
+
+  alias AshAuthzed.Adapter
+  alias AshAuthzed.Adapters.Licet, as: LicetAdapter
+  alias AshAuthzed.Adapters.Memory
+  alias AshAuthzed.Error
+
+  @schema_zed """
+  definition user {}
+
+  definition group {
+    relation member: user
+  }
+
+  definition document {
+    relation owner: user
+    relation viewer: user | group#member | user:*
+
+    permission view = owner + viewer
+    permission edit = owner
+  }
+  """
+
+  describe "AshAuthzed.Error" do
+    test "formats exception messages with nil, string, and structured details" do
+      err_nil = Error.new(:not_started)
+      assert Exception.message(err_nil) == "AshAuthzed error: :not_started"
+
+      err_str = Error.new(:invalid_object, "Expected type:id")
+      assert Exception.message(err_str) == "AshAuthzed error (invalid_object): Expected type:id"
+
+      err_map = Error.new(:spicedb_http_error, %{status: 500})
+      assert Exception.message(err_map) =~ "AshAuthzed error (spicedb_http_error): %{status: 500}"
+    end
+  end
+
+  describe "AshAuthzed.Adapter unified dispatcher" do
+    test "check?/4, lookup_resources!/4, write_tuples/2, and resolve_adapter/1" do
+      store = :"memory_dispatch_#{System.unique_integer([:positive])}"
+      start_supervised!({Memory, name: store, schema: @schema_zed})
+
+      opts = [adapter: :memory, adapter_opts: [store: store]]
+
+      assert {:ok, :noop} = Adapter.write_tuples([], opts)
+
+      assert {:ok, :synced} =
+               Adapter.write_tuples([{:create, "document:doc1#owner@user:alice"}], opts)
+
+      assert Adapter.check?("document:doc1", :view, "user:alice", opts)
+      refute Adapter.check?("document:doc1", :view, "user:bob", opts)
+      refute Adapter.check?("invalid_object", :view, "user:alice", opts)
+
+      assert Adapter.lookup_resources!("document", :view, "user:alice", opts) == ["doc1"]
+
+      assert_raise Error, fn ->
+        Adapter.lookup_resources!("document", :view, "invalid_subject", opts)
+      end
+
+      assert_raise Error, ~r/Invalid adapter/, fn ->
+        Adapter.resolve_adapter(adapter: "not_an_atom")
+      end
+    end
+  end
+
+  describe "AshAuthzed.Adapters.Memory contract & async isolation" do
+    test "handles duplicate writes (idempotency), non-existent deletes, wildcards, and indirect group#member traversal" do
+      store = :"memory_contract_#{System.unique_integer([:positive])}"
+      start_supervised!({Memory, name: store, schema: @schema_zed})
+      opts = [store: store]
+
+      # 1. Idempotent duplicate writes (:create and :touch)
+      assert {:ok, :synced} =
+               Memory.write_tuples(
+                 [
+                   {:create, "document:doc1#owner@user:alice"},
+                   {:create, "document:doc1#owner@user:alice"},
+                   {:touch, "document:doc1#owner@user:alice"}
+                 ],
+                 opts
+               )
+
+      assert Memory.list_tuples(store) == ["document:doc1#owner@user:alice"]
+
+      # 2. Deleting a non-existent tuple succeeds idempotently
+      assert {:ok, :synced} =
+               Memory.write_tuples([{:delete, "document:doc999#owner@user:nobody"}], opts)
+
+      # 3. Subject-set / indirect relationship traversal (`group:eng#member`)
+      assert {:ok, :synced} =
+               Memory.write_tuples(
+                 [
+                   {:create, "group:eng#member@user:bob"},
+                   {:create, "document:doc2#viewer@group:eng#member"}
+                 ],
+                 opts
+               )
+
+      assert {:ok, true} = Memory.check("document:doc2", "view", "user:bob", opts)
+      assert {:ok, false} = Memory.check("document:doc2", "edit", "user:bob", opts)
+      assert {:ok, ["doc2"]} = Memory.lookup_resources("document", "view", "user:bob", opts)
+
+      # 4. Wildcard tuples (`user:*`) and deleting wildcard tuples
+      assert {:ok, :synced} =
+               Memory.write_tuples([{:create, "document:public_doc#viewer@user:*"}], opts)
+
+      assert {:ok, true} = Memory.check("document:public_doc", "view", "user:stranger", opts)
+
+      assert {:ok, :synced} =
+               Memory.write_tuples([{:delete, "document:public_doc#viewer@user:*"}], opts)
+
+      assert {:ok, false} = Memory.check("document:public_doc", "view", "user:stranger", opts)
+    end
+
+    test "isolates state across concurrent supervised Memory stores without cross-test pollution" do
+      store_a = :"isolated_store_a_#{System.unique_integer([:positive])}"
+      store_b = :"isolated_store_b_#{System.unique_integer([:positive])}"
+
+      start_supervised!({Memory, name: store_a, schema: @schema_zed}, id: store_a)
+      start_supervised!({Memory, name: store_b, schema: @schema_zed}, id: store_b)
+
+      assert {:ok, :synced} =
+               Memory.write_tuples([{:create, "document:secret_a#owner@user:alice"}],
+                 store: store_a
+               )
+
+      assert {:ok, :synced} =
+               Memory.write_tuples([{:create, "document:secret_b#owner@user:bob"}],
+                 store: store_b
+               )
+
+      assert {:ok, ["secret_a"]} =
+               Memory.lookup_resources("document", "view", "user:alice", store: store_a)
+
+      assert {:ok, []} =
+               Memory.lookup_resources("document", "view", "user:alice", store: store_b)
+
+      assert {:ok, ["secret_b"]} =
+               Memory.lookup_resources("document", "view", "user:bob", store: store_b)
+
+      assert {:ok, []} =
+               Memory.lookup_resources("document", "view", "user:bob", store: store_a)
+    end
+
+    test "validates startup options, schema file loading, and error states" do
+      # Unstarted store returns :not_started
+      assert {:error, %Error{reason: :not_started}} =
+               Memory.check("document:1", "view", "user:alice", store: :non_existent_store)
+
+      assert {:error, %Error{reason: :not_started}} =
+               Memory.write_tuples([{:create, "document:1#owner@user:alice"}],
+                 store: :non_existent_store
+               )
+
+      # Invalid NimbleOptions
+      assert {:error, %Error{reason: :invalid_options}} = Memory.start_link([])
+
+      # Missing schema file
+      assert {:error, %Error{reason: :schema_file_error}} =
+               Memory.start_link(
+                 name: :"err_file_#{System.unique_integer([:positive])}",
+                 schema: {:file, "non_existent_schema.zed"}
+               )
+
+      # Invalid .zed syntax
+      assert {:error, %Error{reason: :invalid_schema}} =
+               Memory.start_link(
+                 name: :"err_syntax_#{System.unique_integer([:positive])}",
+                 schema: "not valid zed syntax {{{"
+               )
+
+      # Invalid initial relationships
+      assert {:error, %Error{reason: :invalid_relationship}} =
+               Memory.start_link(
+                 name: :"err_rel_#{System.unique_integer([:positive])}",
+                 schema: @schema_zed,
+                 relationships: ["malformed_tuple"]
+               )
+    end
+  end
+
+  describe "AshAuthzed.Adapters.Licet unit tests" do
+    test "returns {:error, %Error{reason: :missing_instance}} when :instance option is missing" do
+      assert {:error, %Error{reason: :missing_instance}} =
+               LicetAdapter.check("document:1", "view", "user:alice", [])
+
+      assert {:error, %Error{reason: :missing_instance}} =
+               LicetAdapter.lookup_resources("document", "view", "user:alice", [])
+
+      assert {:error, %Error{reason: :missing_instance}} =
+               LicetAdapter.write_tuples([{:create, "document:1#owner@user:alice"}], [])
+
+      assert {:ok, :noop} = LicetAdapter.write_tuples([], [])
+    end
+  end
+
+  describe "Licet YAML parsing & validation (priv/licet/user_permissions.yaml)" do
+    test "evaluates valid permissions, catches missing permission keys, and handles malformed YAML" do
+      yaml_content = File.read!("priv/licet/user_permissions.yaml")
+      assert {:ok, parsed} = Licet.Validate.parse(yaml_content)
+      assert is_map(parsed.schema)
+      assert parsed.relationships != []
+
+      # Unknown permission evaluation returns error on explain/check
+      assert {:error, _reason} =
+               Licet.Validate.explain(
+                 yaml_content,
+                 "user_profile:alice#non_existent_perm@user:alice"
+               )
+
+      # Malformed YAML returns parse error
+      assert {:error, _reason} = Licet.Validate.parse("::: invalid: yaml: [unclosed")
+    end
+  end
+end

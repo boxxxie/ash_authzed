@@ -48,7 +48,8 @@ defmodule AshAuthzed.MixProject do
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:simple_sat, "~> 0.1", only: [:dev, :test]}
+      {:simple_sat, "~> 0.1", only: [:dev, :test]},
+      {:plug, "~> 1.16", only: :test}
     ]
   end
 
@@ -73,7 +74,8 @@ defmodule AshAuthzed.MixProject do
     [
       licenses: ["MIT"],
       links: %{
-        "GitHub" => @source_url
+        "GitHub" => @source_url,
+        "Changelog" => "#{@source_url}/blob/master/CHANGELOG.md"
       },
       files: ~w(
         lib
@@ -83,6 +85,7 @@ defmodule AshAuthzed.MixProject do
         .formatter.exs
         mix.exs
         README.md
+        CHANGELOG.md
         LICENSE
       )
     ]
@@ -95,6 +98,7 @@ defmodule AshAuthzed.MixProject do
       source_ref: "v#{@version}",
       extras: [
         "README.md": [title: "Overview"],
+        "CHANGELOG.md": [title: "Changelog"],
         "documentation/tutorials/getting-started-with-ash-authzed.md": [
           title: "Getting Started"
         ],
@@ -106,7 +110,7 @@ defmodule AshAuthzed.MixProject do
       groups_for_extras: [
         Tutorials: ~r"documentation/tutorials/",
         "DSL Reference": ~r"documentation/dsls/",
-        Reference: ["usage-rules.md"]
+        Reference: ["usage-rules.md", "CHANGELOG.md"]
       ],
       groups_for_modules: [
         Extension: [
