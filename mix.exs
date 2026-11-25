@@ -42,7 +42,7 @@ defmodule AshAuthzed.MixProject do
 
   defp deps do
     [
-      {:ash, "~> 3.0"},
+      {:ash, ">= 3.38.1 and < 4.0.0"},
       {:spark, "~> 2.2"},
       {:licet, "~> 0.1.0"},
       {:nimble_options, "~> 1.1"},
